@@ -282,6 +282,104 @@ body {
   background: #eaf2ff;
 }
 
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.shop-card {
+  border-color: #d9e0ea;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+}
+
+.shop-card .ant-card-head {
+  min-height: 70px;
+  border-bottom-color: #e8edf4;
+}
+
+.shop-card-heading {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.shop-card-heading strong,
+.shop-card-code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shop-card-heading strong {
+  color: #172033;
+  font-size: 17px;
+}
+
+.shop-card-code {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.shop-card-icon {
+  color: #2563eb;
+  font-size: 22px;
+}
+
+.shop-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 12px;
+}
+
+.shop-metrics .ant-statistic {
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 3px solid #dce6f5;
+}
+
+.shop-metrics .ant-statistic:nth-child(2) {
+  border-left-color: #b9e2cd;
+}
+
+.shop-metrics .ant-statistic:nth-child(3) {
+  border-left-color: #f3d29a;
+}
+
+.shop-metrics .ant-statistic:nth-child(4) {
+  border-left-color: #d9c4ef;
+}
+
+.shop-metrics .ant-statistic-title {
+  overflow: hidden;
+  color: #68758a;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shop-metrics .ant-statistic-content {
+  color: #172033;
+  font-size: 25px;
+}
+
+.shop-metrics .ant-statistic-content-prefix {
+  margin-right: 8px;
+  color: #657997;
+  font-size: 17px;
+}
+
+.shops-feedback {
+  display: grid;
+  min-height: 280px;
+  place-items: center;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 .table-card .ant-table-cell {
   font-size: 14px;
 }
@@ -610,5 +708,15 @@ body {
   .panel-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 600px) {
+  .shop-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shop-metrics {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

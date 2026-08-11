@@ -4,6 +4,7 @@ import type {
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
+  Shop,
   TemplateSummary
 } from '@shared/domain';
 import AccountPage from './account';
@@ -24,12 +25,16 @@ type ModuleRenderContext = {
   openTemplate(templateId: string): Promise<void>;
   orders: Order[];
   reloadOrders(): Promise<void>;
+  reloadShops(): Promise<void>;
   selectedOrder?: Order;
   selectedOrderId: string;
   setAccount(account: LocalUserProfile): void;
   setCurrentDocument(document: AlbumTemplateDocument | undefined): void;
   setSelectedOrderId(orderId: string): void;
   setStatus(message: string): void;
+  shops: Shop[];
+  shopsError: string;
+  shopsLoading: boolean;
   templates: TemplateSummary[];
 };
 
@@ -86,5 +91,12 @@ export function renderActiveModule(activeModule: ModuleId, context: ModuleRender
     );
   }
 
-  return <ShopsPage />;
+  return (
+    <ShopsPage
+      shops={context.shops}
+      loading={context.shopsLoading}
+      loadError={context.shopsError}
+      reloadShops={context.reloadShops}
+    />
+  );
 }

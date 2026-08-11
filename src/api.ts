@@ -4,6 +4,7 @@ import type {
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
+  Shop,
   TemplateSummary
 } from '@shared/domain';
 import { apiRequest } from './api/httpClient';
@@ -50,6 +51,38 @@ function firstValue(record: Record<string, unknown>, ...keys: string[]): unknown
   return keys.map((key) => record[key]).find((value) => value !== undefined && value !== null);
 }
 
+function objectTextValues(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, textValue(item)])
+  );
+}
+
+function printImageValue(value: unknown): string {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('打印接口未返回图片数据。');
+  }
+
+  const record = value as Record<string, unknown>;
+  const directValue = firstValue(
+    record,
+    'image_base64',
+    'imageBase64',
+    'base64',
+    'image',
+    'print_image',
+    'printImage'
+  );
+  if (typeof directValue === 'string' && directValue.trim()) return directValue.trim();
+
+  const wrappedValue = firstValue(record, 'data', 'result');
+  if (wrappedValue !== undefined && wrappedValue !== value) return printImageValue(wrappedValue);
+
+  throw new Error('打印接口未返回图片数据。');
+}
+
 function toOrder(value: unknown, index: number): Order {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const id = textValue(firstValue(record, 'id', 'order_id', 'order_number') ?? `order-${index + 1}`);
@@ -63,11 +96,14 @@ function toOrder(value: unknown, index: number): Order {
   const transactionId = textValue(firstValue(record, 'transaction_id', 'transactionId', 'transaction'));
   const quantity = textValue(firstValue(record, 'quantity', 'qty'));
   const price = textValue(firstValue(record, 'price', 'amount'));
+  const productInformation = objectTextValues(record.product_information);
   const raw: Record<string, string> = {};
 
   for (const [key, item] of Object.entries(record)) {
     raw[key] = textValue(item);
   }
+
+  Object.assign(raw, productInformation);
 
   Object.assign(raw, {
     orderno: orderNo,
@@ -100,6 +136,7 @@ function toOrder(value: unknown, index: number): Order {
     customerName: textValue(firstValue(record, 'customer_name', 'customerName') ?? shop),
     status: textValue(record.status),
     sourceUpdatedAt: textValue(firstValue(record, 'updated_at', 'sourceUpdatedAt')) || undefined,
+    productInformation,
     raw,
     items: [item]
   };
@@ -127,6 +164,42 @@ function normalizeOrders(value: unknown): Order[] {
     throw new Error('Invalid orders API response.');
   }
   return data.map(toOrder);
+}
+
+function numberValue(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toShop(value: unknown): Shop {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    id: numberValue(record.id),
+    shop: textValue(record.shop),
+    shopName: textValue(record.shop_name),
+    productCount: numberValue(record.product_count),
+    orderCount: numberValue(record.order_count),
+    sizeTemplateCount: numberValue(record.size_template_count),
+    fontTemplateCount: numberValue(record.font_template_count),
+    createdAt: textValue(record.created_at),
+    updatedAt: textValue(record.updated_at)
+  };
+}
+
+function normalizeShops(value: unknown): Shop[] {
+  let data = value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    data = record.shops ?? record.items ?? record.data ?? value;
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const wrapped = data as Record<string, unknown>;
+      data = wrapped.shops ?? wrapped.items ?? data;
+    }
+  }
+  if (!Array.isArray(data)) {
+    throw new Error('Invalid shops API response.');
+  }
+  return data.map(toShop);
 }
 
 function defaultUser(): LocalUserProfile {
@@ -160,12 +233,28 @@ function saveTemplateDocument(document: AlbumTemplateDocument): TemplateSummary 
 }
 
 export const browserAlbumApi = {
+  shops: {
+    list: async (): Promise<Shop[]> => normalizeShops(await apiRequest<unknown>({
+      method: 'GET',
+      url: '/shops'
+    }))
+  },
   orders: {
     list: async (): Promise<Order[]> => normalizeOrders(await apiRequest<unknown>({
       method: 'GET',
       url: '/orders',
       params: { limit: 50 }
-    }))
+    })),
+    printImage: async (order: Pick<Order, 'id' | 'orderNo'>): Promise<string> => printImageValue(
+      await apiRequest<unknown>({
+        method: 'POST',
+        url: '/orders/print-image',
+        data: {
+          order_id: order.id,
+          order_number: order.orderNo
+        }
+      })
+    )
   },
   templates: {
     list: async (): Promise<TemplateSummary[]> => readStorage(storageKeys.templates, []),

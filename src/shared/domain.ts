@@ -14,8 +14,21 @@ export type Order = {
   customerName: string;
   status: string;
   sourceUpdatedAt?: string;
+  productInformation: Record<string, string>;
   raw: Record<string, string>;
   items: OrderItem[];
+};
+
+export type Shop = {
+  id: number;
+  shop: string;
+  shopName: string;
+  productCount: number;
+  orderCount: number;
+  sizeTemplateCount: number;
+  fontTemplateCount: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type TemplateRule = {

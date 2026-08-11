@@ -3,6 +3,7 @@ import type {
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
+  Shop,
   TemplateSummary
 } from '@shared/domain';
 
@@ -43,4 +44,11 @@ export type OrdersPageProps = {
   reloadOrders(): Promise<void>;
   setSelectedOrderId(orderId: string): void;
   openOrderInEditor(order: Order): void;
+};
+
+export type ShopsPageProps = {
+  shops: Shop[];
+  loading: boolean;
+  loadError: string;
+  reloadShops(): Promise<void>;
 };

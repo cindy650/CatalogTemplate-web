@@ -5,6 +5,7 @@ import type {
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
+  Shop,
   TemplateSummary
 } from '@shared/domain';
 import AppLayout from './layout/AppLayout';
@@ -16,11 +17,14 @@ import { browserAlbumApi } from './api';
 function App() {
   const { message, notification } = AntdApp.useApp();
   const { activeModule, navigateToModule } = useAppRoute();
+  const [shops, setShops] = useState<Shop[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [exports, setExports] = useState<ExportHistoryEntry[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
+  const [shopsLoading, setShopsLoading] = useState(false);
+  const [shopsError, setShopsError] = useState('');
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [currentDocument, setCurrentDocument] = useState<AlbumTemplateDocument>();
   const [account, setAccount] = useState<LocalUserProfile>();
@@ -45,6 +49,23 @@ function App() {
     }
   }, [message]);
 
+  const refreshShops = useCallback(async () => {
+    setShopsLoading(true);
+    setShopsError('');
+    try {
+      const nextShops = await browserAlbumApi.shops.list();
+      setShops(nextShops);
+      setStatus(`已加载 ${nextShops.length} 个店铺`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setShopsError(errorMessage);
+      setStatus(`店铺加载失败：${errorMessage}`);
+      message.error(`店铺加载失败：${errorMessage}`);
+    } finally {
+      setShopsLoading(false);
+    }
+  }, [message]);
+
   const refreshLocalData = useCallback(async () => {
     const [nextTemplates, nextExports, nextAccount] = await Promise.all([
       browserAlbumApi.templates.list(),
@@ -59,13 +80,14 @@ function App() {
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
+    void refreshShops();
     void refreshOrders();
     void refreshLocalData().catch((error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       setStatus(errorMessage);
       message.error(errorMessage);
     });
-  }, [message, refreshLocalData, refreshOrders]);
+  }, [message, refreshLocalData, refreshOrders, refreshShops]);
 
   useEffect(() => {
     return connectOrderEventStream({
@@ -124,12 +146,16 @@ function App() {
     openTemplate,
     orders,
     reloadOrders: refreshOrders,
+    reloadShops: refreshShops,
     selectedOrder,
     selectedOrderId,
     setAccount,
     setCurrentDocument,
     setSelectedOrderId,
     setStatus,
+    shops,
+    shopsError,
+    shopsLoading,
     templates
   });
 

@@ -1,8 +1,11 @@
-import { Button, Empty, Result, Table } from 'antd';
-import { FileAddOutlined, ReloadOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import { App, Button, Empty, Result, Space, Table } from 'antd';
+import { FileAddOutlined, PrinterOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { Order, OrderItem } from '@shared/domain';
+import { browserAlbumApi } from '../../api';
 import type { OrdersPageProps } from '../types';
+import { printBase64Image } from './printImage';
 
 type OrderTableRow = {
   order: Order;
@@ -53,6 +56,18 @@ function orderRows(orders: Order[]): OrderTableRow[] {
   );
 }
 
+function productInformationFields(orders: Order[]): string[] {
+  const fields = new Set<string>();
+
+  for (const order of orders) {
+    for (const field of Object.keys(order.productInformation)) {
+      fields.add(field);
+    }
+  }
+
+  return [...fields];
+}
+
 export default function OrdersPage({
   orders,
   selectedOrderId,
@@ -62,34 +77,78 @@ export default function OrdersPage({
   setSelectedOrderId,
   openOrderInEditor
 }: OrdersPageProps) {
+  const { message } = App.useApp();
+  const [printingOrderId, setPrintingOrderId] = useState('');
   const rows = orderRows(orders);
+  const dynamicFields = productInformationFields(orders);
+  const dynamicColumns: ColumnsType<OrderTableRow> = dynamicFields.map((field) => ({
+    title: field,
+    key: `product-information:${field}`,
+    width: 200,
+    render: (_: unknown, { order }: OrderTableRow) => (
+      <span className="order-cell-content">{order.productInformation[field] || '-'}</span>
+    )
+  }));
+  const productFieldIndex = orderFields.findIndex(([label]) => label === '产品');
+  const fixedColumns: ColumnsType<OrderTableRow> = orderFields.map(([label, candidates]) => ({
+    title: label,
+    key: label,
+    width: label === '邮寄地址' ? 320 : label === '定制信息' ? 260 : label === '产品' ? 200 : 140,
+    render: (_: unknown, { item }: OrderTableRow) => {
+      const value = readRawValue(item.raw, candidates) || '-';
+      return <span className="order-cell-content">{value}</span>;
+    }
+  }));
+
+  async function confirmProduction(order: Order): Promise<void> {
+    setPrintingOrderId(order.id);
+    try {
+      const image = await browserAlbumApi.orders.printImage(order);
+      await printBase64Image(image);
+      message.success(`订单 ${order.orderNo} 的打印图片已生成`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(`订单 ${order.orderNo} 生产失败：${errorMessage}`);
+    } finally {
+      setPrintingOrderId('');
+    }
+  }
+
   const columns: ColumnsType<OrderTableRow> = [
-    ...orderFields.map(([label, candidates]) => ({
-      title: label,
-      key: label,
-      width: label === '邮寄地址' ? 320 : label === '定制信息' ? 260 : label === '产品' ? 200 : 140,
-      render: (_: unknown, { item }: OrderTableRow) => {
-        const value = readRawValue(item.raw, candidates) || '-';
-        return <span className="order-cell-content">{value}</span>;
-      }
-    })),
+    ...fixedColumns.slice(0, productFieldIndex + 1),
+    ...dynamicColumns,
+    ...fixedColumns.slice(productFieldIndex + 1),
     {
       title: '操作',
       key: 'actions',
-      width: 120,
+      width: 260,
       fixed: 'right',
       align: 'center',
       render: (_: unknown, { order }: OrderTableRow) => (
-        <Button
-          type="link"
-          icon={<FileAddOutlined />}
-          onClick={(event) => {
-            event.stopPropagation();
-            openOrderInEditor(order);
-          }}
-        >
-          生成模板
-        </Button>
+        <Space size={4}>
+          <Button
+            type="link"
+            icon={<FileAddOutlined />}
+            onClick={(event) => {
+              event.stopPropagation();
+              openOrderInEditor(order);
+            }}
+          >
+            生成模板
+          </Button>
+          <Button
+            type="primary"
+            icon={<PrinterOutlined />}
+            loading={printingOrderId === order.id}
+            disabled={Boolean(printingOrderId) && printingOrderId !== order.id}
+            onClick={(event) => {
+              event.stopPropagation();
+              void confirmProduction(order);
+            }}
+          >
+            确认生产
+          </Button>
+        </Space>
       )
     }
   ];
@@ -115,7 +174,7 @@ export default function OrdersPage({
           rowKey={({ order, item }) => `${order.id}:${item.id}`}
           loading={{ spinning: loading, description: '正在加载订单...' }}
           pagination={false}
-          scroll={{ x: 1880, y: 'calc(100vh - 210px)' }}
+          scroll={{ x: 2020 + dynamicFields.length * 200, y: 'calc(100vh - 210px)' }}
           rowClassName={({ order }) => selectedOrderId === order.id ? 'selected' : ''}
           onRow={({ order }) => ({
             onClick: () => setSelectedOrderId(order.id),
