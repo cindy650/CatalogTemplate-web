@@ -2,6 +2,7 @@ import axios, { type AxiosError, type AxiosRequestConfig } from 'axios';
 
 const configuredBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
 const apiBaseUrl = configuredBaseUrl ? configuredBaseUrl.replace(/\/+$/, '') : undefined;
+const configuredApiToken = (import.meta.env.VITE_API_TOKEN as string | undefined)?.trim();
 const accessTokenStorageKey = 'album-web-access-token';
 
 type ApiErrorPayload = {
@@ -58,7 +59,11 @@ httpClient.interceptors.request.use(
   (config) => {
     const token = readAccessToken();
     config.headers.set('Accept', 'application/json');
-    if (token) config.headers.set('Authorization', 'Bearer ' + token);
+    const apiToken = configuredApiToken || token;
+    if (apiToken) {
+      config.headers.set('X-API-Key', apiToken);
+      config.headers.set('Authorization', 'Bearer ' + apiToken);
+    }
     return config;
   },
   (error) => Promise.reject(error)

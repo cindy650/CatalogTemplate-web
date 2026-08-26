@@ -1,29 +1,118 @@
-import { useState } from 'react';
-import { App, Button, Empty, Result, Space, Table } from 'antd';
-import { FileAddOutlined, PrinterOutlined, ReloadOutlined } from '@ant-design/icons';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { App, Button, Dropdown, Empty, Input, Pagination, Popconfirm, Result, Select, Space, Table, Tag, Tooltip } from 'antd';
+import { CheckOutlined, DownOutlined, EditOutlined, PrinterOutlined, ReloadOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import type { Order, OrderItem } from '@shared/domain';
+import type { Order, OrderItem, OrderListFilters, OrderTemplateExportFormat } from '@shared/domain';
 import { browserAlbumApi } from '../../api';
 import type { OrdersPageProps } from '../types';
-import { printBase64Image } from './printImage';
+import { downloadExportFile } from './downloadExport';
+import { hasOrderTemplateJson } from './orderTemplate';
 
 type OrderTableRow = {
   order: Order;
   item: OrderItem;
 };
 
-const orderFields = [
-  ['订单号', ['订单号', '订单编号', 'orderid', 'orderno']],
-  ['店铺', ['店铺', 'shop', 'store']],
-  ['产品', ['产品', '商品', 'product', 'item']],
-  ['规格/尺寸', ['规格/尺寸', '规格尺寸', 'specification', 'size']],
-  ['定制信息', ['定制信息', '自定义信息', '备注', 'custominfo', 'note']],
-  ['付款方式', ['付款方式', 'payment', 'paymentmethod']],
-  ['邮寄地址', ['邮寄地址', '收货地址', 'address', 'shippingaddress']],
-  ['交易编号', ['交易编号', 'transactionid', 'transaction']],
-  ['数量', ['数量', 'qty', 'quantity']],
-  ['价格', ['价格', 'price', 'amount']]
-] as const;
+const templateExportFormats: OrderTemplateExportFormat[] = ['png', 'jpg', 'svg', 'eps'];
+const productInformationColumnWidth = 420;
+
+const orderStatusColors: Record<number, string> = {
+  0: 'blue',
+  1: 'gold',
+  2: 'cyan',
+  3: 'purple',
+  4: 'orange',
+  5: 'green'
+};
+
+type OrderFixedColumnSizing = {
+  status: number;
+  actions: number;
+};
+
+function fixedColumnSizing(viewportWidth: number): OrderFixedColumnSizing {
+  if (viewportWidth < 600) return { status: 68, actions: 94 };
+  if (viewportWidth < 900) return { status: 92, actions: 108 };
+  if (viewportWidth < 1280) return { status: 120, actions: 128 };
+  return { status: 144, actions: 150 };
+}
+
+function useOrderFixedColumnSizing(): OrderFixedColumnSizing {
+  const [sizing, setSizing] = useState<OrderFixedColumnSizing>(() => (
+    fixedColumnSizing(typeof window === 'undefined' ? 1280 : window.innerWidth)
+  ));
+
+  useEffect(() => {
+    const updateSizing = () => setSizing(fixedColumnSizing(window.innerWidth));
+    window.addEventListener('resize', updateSizing);
+    return () => window.removeEventListener('resize', updateSizing);
+  }, []);
+
+  return sizing;
+}
+
+function useOrderTableBodyHeight(measureKey: unknown) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [bodyHeight, setBodyHeight] = useState(240);
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+
+    const updateHeight = () => {
+      const tableHeader = card.querySelector<HTMLElement>('.ant-table-thead');
+      const footer = card.querySelector<HTMLElement>('.orders-footer');
+      if (!tableHeader || !footer) return;
+
+      const cardStyles = window.getComputedStyle(card);
+      const verticalBorders = Number.parseFloat(cardStyles.borderTopWidth)
+        + Number.parseFloat(cardStyles.borderBottomWidth);
+      const availableHeight = Math.floor(
+        card.clientHeight - footer.offsetHeight - tableHeader.offsetHeight - verticalBorders
+      );
+      setBodyHeight((current) => current === availableHeight ? current : Math.max(120, availableHeight));
+    };
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(card);
+    const tableHeader = card.querySelector<HTMLElement>('.ant-table-thead');
+    const footer = card.querySelector<HTMLElement>('.orders-footer');
+    if (tableHeader) observer.observe(tableHeader);
+    if (footer) observer.observe(footer);
+    window.addEventListener('resize', updateHeight);
+    updateHeight();
+
+    return () => {
+      window.removeEventListener('resize', updateHeight);
+      observer.disconnect();
+    };
+  }, [measureKey]);
+
+  return { cardRef, bodyHeight };
+}
+
+function orderActionIcon(status: Order['status']) {
+  return status === 4 ? <SendOutlined /> : <CheckOutlined />;
+}
+
+const fallbackOrderActionText: Record<number, string> = {
+  0: '发送示意图',
+  1: '客户已确认',
+  2: '确认生产',
+  3: '完成生产',
+  4: '已发货'
+};
+
+function orderActionText(order: Order): string {
+  return order.statusButtonText || fallbackOrderActionText[order.status] || '';
+}
+
+function statusTextLines(statusText: string) {
+  const lines = statusText.split('/').map((line) => line.trim()).filter(Boolean);
+  return (lines.length > 0 ? lines : [statusText]).map((line, index) => (
+    <span key={`${line}:${index}`}>{line}</span>
+  ));
+}
 
 function normalizeHeader(value: string): string {
   return value.trim().toLowerCase().replace(/[\s_\-/]+/g, '');
@@ -56,20 +145,50 @@ function orderRows(orders: Order[]): OrderTableRow[] {
   );
 }
 
-function productInformationFields(orders: Order[]): string[] {
+function textMarkedFields(orders: Order[]): string[] {
   const fields = new Set<string>();
 
   for (const order of orders) {
-    for (const field of Object.keys(order.productInformation)) {
-      fields.add(field);
+    for (const field of Object.keys(order.fieldLabels)) {
+      if (field !== 'product_information') fields.add(field);
     }
   }
 
-  return [...fields];
+  const orderedFields = [...fields];
+  const shopIndex = orderedFields.indexOf('shop');
+  const shopNameIndex = orderedFields.indexOf('shop_name');
+  if (shopIndex >= 0 && shopNameIndex >= 0 && shopNameIndex !== shopIndex + 1) {
+    orderedFields.splice(shopNameIndex, 1);
+    orderedFields.splice(orderedFields.indexOf('shop') + 1, 0, 'shop_name');
+  }
+
+  return orderedFields;
+}
+
+function orderFieldTitle(orders: Order[], fieldKey: string, fallbackTitle: string): string {
+  for (const order of orders) {
+    const label = order.fieldLabels[fieldKey];
+    if (label) return label;
+  }
+
+  return fallbackTitle;
+}
+
+function orderFieldWidth(field: string): number {
+  if (field.includes('address')) return 320;
+  if (field === 'product') return 240;
+  if (field === 'payment_method') return 220;
+  return 160;
 }
 
 export default function OrdersPage({
   orders,
+  orderTotal,
+  orderLimit,
+  orderPage,
+  orderStatuses,
+  shops,
+  filters,
   selectedOrderId,
   loading,
   loadError,
@@ -78,76 +197,300 @@ export default function OrdersPage({
   openOrderInEditor
 }: OrdersPageProps) {
   const { message } = App.useApp();
-  const [printingOrderId, setPrintingOrderId] = useState('');
+  const [exportingOrderId, setExportingOrderId] = useState('');
+  const [advancingOrderId, setAdvancingOrderId] = useState('');
+  const [sendingPreviewOrderId, setSendingPreviewOrderId] = useState('');
+  const [exportFormats, setExportFormats] = useState<Record<string, OrderTemplateExportFormat>>({});
+  const [orderNumber, setOrderNumber] = useState(filters.orderNumber ?? '');
+  const [shop, setShop] = useState<string | undefined>(filters.shop);
+  const [status, setStatus] = useState<number | undefined>(filters.status);
+  const fixedColumns = useOrderFixedColumnSizing();
+  const { cardRef: tableCardRef, bodyHeight: tableBodyHeight } = useOrderTableBodyHeight(orders);
   const rows = orderRows(orders);
-  const dynamicFields = productInformationFields(orders);
-  const dynamicColumns: ColumnsType<OrderTableRow> = dynamicFields.map((field) => ({
-    title: field,
-    key: `product-information:${field}`,
-    width: 200,
-    render: (_: unknown, { order }: OrderTableRow) => (
-      <span className="order-cell-content">{order.productInformation[field] || '-'}</span>
-    )
-  }));
-  const productFieldIndex = orderFields.findIndex(([label]) => label === '产品');
-  const fixedColumns: ColumnsType<OrderTableRow> = orderFields.map(([label, candidates]) => ({
-    title: label,
-    key: label,
-    width: label === '邮寄地址' ? 320 : label === '定制信息' ? 260 : label === '产品' ? 200 : 140,
-    render: (_: unknown, { item }: OrderTableRow) => {
-      const value = readRawValue(item.raw, candidates) || '-';
-      return <span className="order-cell-content">{value}</span>;
+  const textFields = textMarkedFields(orders);
+
+  useEffect(() => {
+    setOrderNumber(filters.orderNumber ?? '');
+    setShop(filters.shop);
+    setStatus(filters.status);
+  }, [filters.orderNumber, filters.shop, filters.status]);
+  const productInformationColumn: ColumnsType<OrderTableRow> = [{
+    title: '商品信息',
+    key: 'product-information',
+    width: productInformationColumnWidth,
+    render: (_: unknown, { order }: OrderTableRow) => {
+      const entries = Object.entries(order.productInformation).filter(([, value]) => value.trim());
+      if (entries.length === 0) return <span className="order-cell-content">-</span>;
+
+      return (
+        <div className="order-product-information">
+          {entries.map(([field, value]) => (
+            <div key={field} className="order-product-information-item">
+              <span className="order-product-information-label">
+                {order.productInformationLabels[field] || field}：
+              </span>
+              <span>{value}</span>
+            </div>
+          ))}
+        </div>
+      );
     }
-  }));
+  }];
+  const textMarkedColumns: ColumnsType<OrderTableRow> = textFields.map((field) => {
+    return {
+      title: orderFieldTitle(orders, field, field),
+      key: `text-marked:${field}`,
+      width: orderFieldWidth(field),
+      render: (_: unknown, { item }: OrderTableRow) => (
+        <span className="order-cell-content">{readRawValue(item.raw, [field]) || '-'}</span>
+      )
+    };
+  });
+  const productColumnIndex = textFields.indexOf('product');
+  const orderedDataColumns: ColumnsType<OrderTableRow> = productColumnIndex >= 0
+    ? [
+      ...textMarkedColumns.slice(0, productColumnIndex + 1),
+      ...productInformationColumn,
+      ...textMarkedColumns.slice(productColumnIndex + 1)
+    ]
+    : [
+      ...textMarkedColumns,
+      ...productInformationColumn
+    ];
 
   async function confirmProduction(order: Order): Promise<void> {
-    setPrintingOrderId(order.id);
+    const format = exportFormats[order.id] ?? 'png';
+    setExportingOrderId(order.id);
     try {
-      const image = await browserAlbumApi.orders.printImage(order);
-      await printBase64Image(image);
-      message.success(`订单 ${order.orderNo} 的打印图片已生成`);
+      const file = await browserAlbumApi.orders.exportTemplate(order, format);
+      downloadExportFile(file);
+      await reloadOrders();
+      message.success(`订单 ${order.orderNo} 已完成“${orderActionText(order)}”，${format.toUpperCase()} 文件已开始下载`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(`订单 ${order.orderNo} 生产失败：${errorMessage}`);
+      message.error(`订单 ${order.orderNo} 确认生产失败：${errorMessage}`);
     } finally {
-      setPrintingOrderId('');
+      setExportingOrderId('');
     }
   }
 
+  async function sendPreviewImages(order: Order): Promise<void> {
+    setSendingPreviewOrderId(order.id);
+    try {
+      await browserAlbumApi.orders.sendPreviewImages(order);
+      await reloadOrders();
+      message.success(`订单 ${order.orderNo} 的示意图已发送`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(`订单 ${order.orderNo} 发送示意图失败：${errorMessage}`);
+    } finally {
+      setSendingPreviewOrderId('');
+    }
+  }
+
+  async function advanceOrderStatus(order: Order): Promise<void> {
+    const actionText = orderActionText(order);
+    if (!actionText) return;
+
+    setAdvancingOrderId(order.id);
+    try {
+      await browserAlbumApi.orders.advanceStatus(order);
+      await reloadOrders();
+      message.success(`订单 ${order.orderNo} 已完成“${actionText}”操作`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(`订单 ${order.orderNo} 状态更新失败：${errorMessage}`);
+    } finally {
+      setAdvancingOrderId('');
+    }
+  }
+
+  function searchOrders(): void {
+    const filters: OrderListFilters = {
+      orderNumber: orderNumber.trim() || undefined,
+      shop,
+      status,
+      limit: orderLimit,
+      pages: 1
+    };
+    void reloadOrders(filters);
+  }
+
+  function resetSearch(): void {
+    setOrderNumber('');
+    setShop(undefined);
+    setStatus(undefined);
+    void reloadOrders({ limit: orderLimit, pages: 1 });
+  }
+
   const columns: ColumnsType<OrderTableRow> = [
-    ...fixedColumns.slice(0, productFieldIndex + 1),
-    ...dynamicColumns,
-    ...fixedColumns.slice(productFieldIndex + 1),
+    ...orderedDataColumns,
+    {
+      title: '状态',
+      key: 'status',
+      width: fixedColumns.status,
+      fixed: 'right',
+      align: 'center',
+      className: 'order-status-column',
+      render: (_: unknown, { order }: OrderTableRow) => (
+        <Tag
+          className={`order-status-tag order-status-tag-${order.status}`}
+          color={orderStatusColors[order.status] ?? 'default'}
+        >
+          <span className="order-status-text">{statusTextLines(order.statusText)}</span>
+        </Tag>
+      )
+    },
     {
       title: '操作',
       key: 'actions',
-      width: 260,
+      width: fixedColumns.actions,
       fixed: 'right',
       align: 'center',
+      className: 'order-actions-column',
       render: (_: unknown, { order }: OrderTableRow) => (
-        <Space size={4}>
-          <Button
-            type="link"
-            icon={<FileAddOutlined />}
-            onClick={(event) => {
-              event.stopPropagation();
-              openOrderInEditor(order);
-            }}
-          >
-            生成模板
-          </Button>
-          <Button
-            type="primary"
-            icon={<PrinterOutlined />}
-            loading={printingOrderId === order.id}
-            disabled={Boolean(printingOrderId) && printingOrderId !== order.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              void confirmProduction(order);
-            }}
-          >
-            确认生产
-          </Button>
+        <Space className="order-actions" orientation="vertical" size={2}>
+          {order.status === 0 && (
+            <Button
+              block
+              size="small"
+              type="primary"
+              icon={<SendOutlined />}
+              loading={sendingPreviewOrderId === order.id}
+              disabled={Boolean(sendingPreviewOrderId) && sendingPreviewOrderId !== order.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                void sendPreviewImages(order);
+              }}
+            >
+              {orderActionText(order)}
+            </Button>
+          )}
+          {order.status === 1 && (
+            <Tooltip title={hasOrderTemplateJson(order) ? undefined : '该订单尚未存储模板 JSON'}>
+              <span style={{ display: 'block', width: '100%' }}>
+                <Button
+                  block
+                  size="small"
+                  icon={<EditOutlined />}
+                  disabled={!hasOrderTemplateJson(order)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openOrderInEditor(order);
+                  }}
+                >
+                  编辑订单模板
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+          {order.status === 1 && (
+            <Popconfirm
+              title={`确认“${orderActionText(order)}”？`}
+              description="确认后将推进订单状态，操作完成后会刷新订单列表。"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={(event) => {
+                event?.stopPropagation();
+                void advanceOrderStatus(order);
+              }}
+              onCancel={(event) => event?.stopPropagation()}
+            >
+              <Button
+                block
+                size="small"
+                type="primary"
+                icon={orderActionIcon(order.status)}
+                loading={advancingOrderId === order.id}
+                disabled={Boolean(advancingOrderId) && advancingOrderId !== order.id}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {orderActionText(order)}
+              </Button>
+            </Popconfirm>
+          )}
+          {order.status === 2 && (
+            <Space.Compact block>
+              <Popconfirm
+                title="确认生产？"
+                description={`确认后将生成并下载 ${(exportFormats[order.id] ?? 'png').toUpperCase()} 工程文件。`}
+                okText="确认"
+                cancelText="取消"
+                onConfirm={(event) => {
+                  event?.stopPropagation();
+                  void confirmProduction(order);
+                }}
+                onCancel={(event) => event?.stopPropagation()}
+              >
+                <Tooltip title="可选择工程文件格式">
+                  <Button
+                    className="order-export-button"
+                    size="small"
+                    type="primary"
+                    icon={<PrinterOutlined />}
+                    loading={exportingOrderId === order.id}
+                    disabled={Boolean(exportingOrderId) && exportingOrderId !== order.id}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <span className="order-export-label">
+                      <span>{orderActionText(order)}</span>
+                      <span className="order-action-format">{(exportFormats[order.id] ?? 'png').toUpperCase()}</span>
+                    </span>
+                  </Button>
+                </Tooltip>
+              </Popconfirm>
+              <Dropdown
+                menu={{
+                  selectedKeys: [exportFormats[order.id] ?? 'png'],
+                  items: templateExportFormats.map((format) => ({
+                    key: format,
+                    label: format.toUpperCase()
+                  })),
+                  onClick: ({ key, domEvent }) => {
+                    domEvent.stopPropagation();
+                    setExportFormats((current) => ({
+                      ...current,
+                      [order.id]: key as OrderTemplateExportFormat
+                    }));
+                  }
+                }}
+              >
+                <Button
+                  size="small"
+                  type="primary"
+                  aria-label="选择导出格式"
+                  icon={<DownOutlined />}
+                  disabled={Boolean(exportingOrderId)}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              </Dropdown>
+            </Space.Compact>
+          )}
+          {order.status >= 3 && order.status <= 4 && orderActionText(order) && (
+            <Popconfirm
+              title={`确认“${orderActionText(order)}”？`}
+              description="确认后将推进订单状态，操作完成后会刷新订单列表。"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={(event) => {
+                event?.stopPropagation();
+                void advanceOrderStatus(order);
+              }}
+              onCancel={(event) => event?.stopPropagation()}
+            >
+              <Button
+                block
+                size="small"
+                type="primary"
+                icon={orderActionIcon(order.status)}
+                loading={advancingOrderId === order.id}
+                disabled={Boolean(advancingOrderId) && advancingOrderId !== order.id}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {orderActionText(order)}
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       )
     }
@@ -156,16 +499,59 @@ export default function OrdersPage({
   return (
     <section className="panel orders-panel">
       <header className="panel-header">
-        <div>
+        <div className="orders-heading">
           <h1>订单管理</h1>
-          <p>订单数据由后端接口提供。单击行选中订单，双击行进入模板编辑器。</p>
+          <p>单击订单行选中订单，双击行进入模板编辑器。</p>
         </div>
-        <Button icon={<ReloadOutlined spin={loading} />} loading={loading} onClick={() => void reloadOrders()}>
-          刷新列表
-        </Button>
+        <div className="order-search-bar">
+          <Input
+            allowClear
+            className="order-search-number"
+            placeholder="订单号"
+            value={orderNumber}
+            onChange={(event) => setOrderNumber(event.target.value)}
+            onPressEnter={searchOrders}
+          />
+          <Select
+            allowClear
+            showSearch
+            className="order-search-select"
+            placeholder="店铺"
+            optionFilterProp="label"
+            value={shop}
+            options={shops.map((item) => ({
+              value: item.shop,
+              label: item.shopName ? `${item.shopName} (${item.shop})` : item.shop
+            }))}
+            onChange={setShop}
+          />
+          <Select
+            allowClear
+            className="order-search-select order-status-select"
+            placeholder="状态"
+            value={status}
+            options={orderStatuses.map((item) => ({
+              value: item.status,
+              label: item.statusText
+            }))}
+            onChange={setStatus}
+          />
+          <Button type="primary" icon={<SearchOutlined />} loading={loading} onClick={searchOrders}>
+            查询
+          </Button>
+          <Button disabled={loading} onClick={resetSearch}>重置</Button>
+          <Tooltip title="刷新当前查询结果">
+            <Button
+              aria-label="刷新当前查询结果"
+              icon={<ReloadOutlined spin={loading} />}
+              disabled={loading}
+              onClick={() => void reloadOrders()}
+            />
+          </Tooltip>
+        </div>
       </header>
 
-      <div className="table-card">
+      <div ref={tableCardRef} className="table-card order-table-card">
         <Table<OrderTableRow>
           className="orders-table"
           columns={columns}
@@ -174,11 +560,20 @@ export default function OrdersPage({
           rowKey={({ order, item }) => `${order.id}:${item.id}`}
           loading={{ spinning: loading, description: '正在加载订单...' }}
           pagination={false}
-          scroll={{ x: 2020 + dynamicFields.length * 200, y: 'calc(100vh - 210px)' }}
+          scroll={{
+            x: fixedColumns.status + fixedColumns.actions + productInformationColumnWidth + textFields.reduce(
+              (width, field) => width + orderFieldWidth(field),
+              0
+            ),
+            y: tableBodyHeight
+          }}
           rowClassName={({ order }) => selectedOrderId === order.id ? 'selected' : ''}
           onRow={({ order }) => ({
             onClick: () => setSelectedOrderId(order.id),
-            onDoubleClick: () => openOrderInEditor(order)
+            onDoubleClick: () => {
+              if (hasOrderTemplateJson(order)) openOrderInEditor(order);
+              else message.warning('该订单尚未存储模板 JSON，无法进入编辑页面');
+            }
           })}
           locale={{
             emptyText: loadError ? (
@@ -195,6 +590,24 @@ export default function OrdersPage({
             )
           }}
         />
+        <footer className="orders-footer">
+          <Pagination
+            showQuickJumper
+            showSizeChanger
+            current={orderPage}
+            pageSize={orderLimit}
+            total={orderTotal}
+            pageSizeOptions={[10, 20, 50, 100]}
+            showTotal={(total) => `共 ${total} 条`}
+            onChange={(page, pageSize) => void reloadOrders({
+              orderNumber: orderNumber.trim() || undefined,
+              shop,
+              status,
+              limit: pageSize,
+              pages: page
+            })}
+          />
+        </footer>
       </div>
     </section>
   );

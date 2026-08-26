@@ -1,17 +1,57 @@
 import { nanoid } from 'nanoid';
 import type {
   AlbumTemplateDocument,
+  AddMountedFontLayoutPayload,
+  CatalogSizeOption,
+  CatalogSizeOptionFields,
+  CatalogSizeTemplate,
+  CatalogSizeTemplatePayload,
+  FontLayoutCanvas,
+  FontLayoutLibraryPayload,
+  FontLayoutLibraryTemplate,
   ExportHistoryEntry,
+  FontLibraryItem,
+  FontUploadPayload,
+  FontUpdatePayload,
+  FontLayoutTemplate,
+  FontLayoutSyncResult,
+  FontLayoutSizeOptionStatus,
+  FontLayoutSizeOptionsSyncItem,
+  FontLayoutSizeOptionsSyncResult,
   LocalUserProfile,
   Order,
+  OrderListFilters,
+  OrderListResult,
+  OrderStatusDefinition,
+  OrderTemplateExportFormat,
+  ProductCategory,
+  ProductCategoryPayload,
+  ProductShop,
   Shop,
+  ShopPayload,
+  SizeTemplateFormData,
+  SizeTemplateFormOption,
+  SizeTemplateFormSizeData,
+  SizeTemplate,
+  SizeTemplateOptionPayload,
+  SizeTemplatePayload,
+  SizeTemplateUnit,
+  SizeTemplateUnitValues,
+  MountedFontLayout,
+  MountedSizeLayout,
+  SaveMountedSizeLayoutPayload,
+  SyncMountedFontLayoutPayload,
+  TemplateImportAnalyzeResult,
+  TemplateImportDraft,
+  TemplateImportFinalizeResult,
   TemplateSummary
 } from '@shared/domain';
-import { apiRequest } from './api/httpClient';
+import { apiBaseUrl, apiRequest } from './api/httpClient';
 
 const storageKeys = {
   templates: 'album-web-templates',
   templateDocuments: 'album-web-template-documents',
+  sizeTemplates: 'album-web-size-templates',
   exports: 'album-web-exports',
   user: 'album-web-user'
 };
@@ -51,12 +91,63 @@ function firstValue(record: Record<string, unknown>, ...keys: string[]): unknown
   return keys.map((key) => record[key]).find((value) => value !== undefined && value !== null);
 }
 
+function apiFileUrl(value: unknown): string {
+  const path = textValue(value).trim();
+  if (!path || /^(?:https?:|data:|blob:)/i.test(path) || !apiBaseUrl) return path;
+  try {
+    return new URL(path, apiBaseUrl).toString();
+  } catch {
+    return path;
+  }
+}
+
+function orderStatusValue(value: unknown): Order['status'] {
+  const status = typeof value === 'number' ? value : Number.parseInt(textValue(value), 10);
+  return Number.isInteger(status) && status >= 0 && status <= 5 ? status : -1;
+}
+
 function objectTextValues(value: unknown): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
 
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, textValue(item)])
   );
+}
+
+function fieldLabelValues(record: Record<string, unknown>): Record<string, string> {
+  const labels: Record<string, string> = {};
+
+  for (const [key, item] of Object.entries(record)) {
+    if (!key.endsWith('_text')) continue;
+    if (key === 'status_text' || key === 'status_button_text') continue;
+
+    const field = key.slice(0, -'_text'.length);
+    const label = textValue(item).trim();
+    if (field && label) labels[field] = label;
+  }
+
+  return labels;
+}
+
+function objectDataAndLabels(value: unknown): {
+  labels: Record<string, string>;
+  values: Record<string, string>;
+} {
+  const labels: Record<string, string> = {};
+  const values: Record<string, string> = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { labels, values };
+
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (key.endsWith('_text')) {
+      const field = key.slice(0, -'_text'.length);
+      const label = textValue(item).trim();
+      if (field && label) labels[field] = label;
+    } else {
+      values[key] = textValue(item);
+    }
+  }
+
+  return { labels, values };
 }
 
 function printImageValue(value: unknown): string {
@@ -83,6 +174,61 @@ function printImageValue(value: unknown): string {
   throw new Error('打印接口未返回图片数据。');
 }
 
+export type OrderTemplateExportFile = {
+  base64?: string;
+  ossUrl?: string;
+  filename: string;
+  mimeType: string;
+};
+
+function templateExportValue(value: unknown): OrderTemplateExportFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('导出接口未返回文件数据。');
+  }
+
+  const record = value as Record<string, unknown>;
+  const ossUrl = textValue(firstValue(record, 'oss_url', 'ossUrl')).trim();
+  const base64 = textValue(firstValue(record, 'file_base64', 'fileBase64')).trim();
+  if (ossUrl || base64) {
+    let urlFilename = '';
+    if (ossUrl) {
+      try {
+        urlFilename = decodeURIComponent(new URL(ossUrl).pathname.split('/').at(-1) ?? '');
+      } catch {
+        urlFilename = '';
+      }
+    }
+    return {
+      base64: base64 || undefined,
+      ossUrl: ossUrl || undefined,
+      filename: textValue(record.filename).trim() || urlFilename || 'order-template.zip',
+      mimeType: textValue(firstValue(record, 'mime_type', 'mimeType')).trim() || 'application/octet-stream'
+    };
+  }
+
+  const wrappedValue = firstValue(record, 'data', 'result');
+  if (wrappedValue !== undefined && wrappedValue !== value) return templateExportValue(wrappedValue);
+
+  throw new Error('导出接口未返回文件数据。');
+}
+
+function normalizeOrderStatuses(value: unknown): OrderStatusDefinition[] {
+  let data = value;
+  if (value && typeof value === 'object' && !Array.isArray(value) && 'data' in value) {
+    data = (value as { data: unknown }).data;
+  }
+  if (!Array.isArray(data)) throw new Error('Invalid order statuses API response.');
+
+  return data.map((item) => {
+    const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    return {
+      status: numberValue(record.status),
+      statusText: textValue(record.status_text),
+      statusButtonText: textValue(record.status_button_text)
+    };
+  });
+}
+
 function toOrder(value: unknown, index: number): Order {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const id = textValue(firstValue(record, 'id', 'order_id', 'order_number') ?? `order-${index + 1}`);
@@ -96,7 +242,13 @@ function toOrder(value: unknown, index: number): Order {
   const transactionId = textValue(firstValue(record, 'transaction_id', 'transactionId', 'transaction'));
   const quantity = textValue(firstValue(record, 'quantity', 'qty'));
   const price = textValue(firstValue(record, 'price', 'amount'));
-  const productInformation = objectTextValues(record.product_information);
+  const fieldLabels = fieldLabelValues(record);
+  const productInformationText = objectDataAndLabels(record.product_information);
+  const productInformation = productInformationText.values;
+  const productInformationLabels = {
+    ...productInformationText.labels,
+    ...objectTextValues(record.product_information_text)
+  };
   const raw: Record<string, string> = {};
 
   for (const [key, item] of Object.entries(record)) {
@@ -134,9 +286,22 @@ function toOrder(value: unknown, index: number): Order {
     id,
     orderNo,
     customerName: textValue(firstValue(record, 'customer_name', 'customerName') ?? shop),
-    status: textValue(record.status),
+    status: orderStatusValue(record.status),
+    statusText: textValue(record.status_text).trim() || '未设置',
+    statusButtonText: textValue(record.status_button_text).trim(),
+    ...(numberValue(firstValue(record, 'shop_id', 'shopId')) > 0
+      ? { shopId: numberValue(firstValue(record, 'shop_id', 'shopId')) }
+      : {}),
+    ...(numberValue(firstValue(record, 'product_id', 'productId')) > 0
+      ? { productId: numberValue(firstValue(record, 'product_id', 'productId')) }
+      : {}),
+    sizeTemplateId: textValue(firstValue(record, 'size_template_id', 'sizeTemplateId')).trim() || undefined,
+    matchedTemplate: recordValue(firstValue(record, 'matched_template', 'matchedTemplate')),
+    resolvedLayers: recordValue(firstValue(record, 'resolved_layers', 'resolvedLayers', 'template_json', 'templateJson')),
     sourceUpdatedAt: textValue(firstValue(record, 'updated_at', 'sourceUpdatedAt')) || undefined,
+    fieldLabels,
     productInformation,
+    productInformationLabels,
     raw,
     items: [item]
   };
@@ -166,6 +331,25 @@ function normalizeOrders(value: unknown): Order[] {
   return data.map(toOrder);
 }
 
+function normalizeOrderList(value: unknown): OrderListResult {
+  let data = value;
+  if (value && typeof value === 'object' && !Array.isArray(value) && 'data' in value) {
+    data = (value as { data: unknown }).data;
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Invalid orders API response.');
+  }
+
+  const record = data as Record<string, unknown>;
+  return {
+    items: normalizeOrders(record.items ?? []),
+    total: numberValue(record.total),
+    limit: numberValue(record.limit) || 20,
+    pages: numberValue(record.pages) || 1,
+    totalPages: numberValue(record.total_pages)
+  };
+}
+
 function numberValue(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -173,10 +357,14 @@ function numberValue(value: unknown): number {
 
 function toShop(value: unknown): Shop {
   const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const products = Array.isArray(record.products)
+    ? record.products.map(textValue).filter(Boolean)
+    : [];
   return {
     id: numberValue(record.id),
     shop: textValue(record.shop),
     shopName: textValue(record.shop_name),
+    products,
     productCount: numberValue(record.product_count),
     orderCount: numberValue(record.order_count),
     sizeTemplateCount: numberValue(record.size_template_count),
@@ -200,6 +388,559 @@ function normalizeShops(value: unknown): Shop[] {
     throw new Error('Invalid shops API response.');
   }
   return data.map(toShop);
+}
+
+function toProductShop(value: unknown): ProductShop {
+  const record = recordValue(value);
+  return {
+    id: numberValue(record.id),
+    shop: textValue(record.shop),
+    shopName: textValue(record.shop_name ?? record.shopName)
+  };
+}
+
+function toProductCategory(value: unknown): ProductCategory {
+  const record = recordValue(value);
+  const rawShops = Array.isArray(record.shops) ? record.shops : [];
+  const shopIds = Array.isArray(record.shop_ids)
+    ? record.shop_ids.map(numberValue).filter((id) => id > 0)
+    : rawShops.map((shop) => toProductShop(shop).id).filter((id) => id > 0);
+  const rawProductNames = record.product_names ?? record.productNames;
+  const productNames = Array.isArray(rawProductNames) ? rawProductNames.map(textValue).filter(Boolean) : [];
+  const rawTemplateIds = record.size_template_ids ?? record.sizeTemplateIds;
+  return {
+    id: numberValue(record.id),
+    name: textValue(record.name).trim(),
+    description: textValue(record.description),
+    enabled: record.enabled === undefined ? true : record.enabled !== false && numberValue(record.enabled) !== 0,
+    productNames,
+    shopIds,
+    shops: rawShops.map(toProductShop).filter((shop) => shop.id > 0),
+    sizeTemplateIds: Array.isArray(rawTemplateIds) ? rawTemplateIds.map(numberValue).filter((id) => id > 0) : []
+  };
+}
+
+function normalizeProducts(value: unknown): ProductCategory[] {
+  const unwrapped = unwrapApiData(value);
+  if (Array.isArray(unwrapped)) return unwrapped.map(toProductCategory);
+  const record = recordValue(unwrapped);
+  const items = record.items ?? record.products;
+  return Array.isArray(items) ? items.map(toProductCategory) : [];
+}
+
+function unwrapApiData(value: unknown): unknown {
+  if (value && typeof value === 'object' && !Array.isArray(value) && 'data' in value) {
+    return (value as { data: unknown }).data;
+  }
+  return value;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function namedApiValue(value: unknown, key: string): unknown {
+  const unwrapped = unwrapApiData(value);
+  const record = recordValue(unwrapped);
+  return record[key] ?? unwrapped;
+}
+
+function toSizeTemplateUnitValues(value: unknown): SizeTemplateUnitValues {
+  const record = recordValue(value);
+  return {
+    single_side_width: numberValue(record.single_side_width),
+    single_side_height: numberValue(record.single_side_height),
+    bleed: numberValue(record.bleed),
+    spine_width: numberValue(record.spine_width),
+    spine_bleed: numberValue(record.spine_bleed)
+  };
+}
+
+function toSizeTemplateFormSizeData(value: unknown): SizeTemplateFormSizeData {
+  const record = recordValue(value);
+  const pageCountArray = Array.isArray(record.page_count_arr)
+    ? record.page_count_arr.map(numberValue).filter((count) => count > 0)
+    : [];
+  return {
+    ...toSizeTemplateUnitValues(record),
+    page_count: numberValue(record.page_count),
+    page_count_arr: pageCountArray,
+    spine_width_mode: record.spine_width_mode === 'by_page_count' ? 'by_page_count' : 'fixed',
+    ...(record.spine_width_formula && typeof record.spine_width_formula === 'object'
+      ? { spine_width_formula: recordValue(record.spine_width_formula) }
+      : {})
+  };
+}
+
+function toSizeTemplateFormData(value: unknown): SizeTemplateFormData {
+  const record = recordValue(namedApiValue(value, 'size_form'));
+  const unitOptions = Array.isArray(record.size_unit_options)
+    ? record.size_unit_options.map(textValue).filter((unit): unit is SizeTemplateFormData['size_unit'] => (
+      unit === 'in' || unit === 'mm' || unit === 'cm'
+    ))
+    : [];
+  const rawSizeOptions = Array.isArray(record.size_options)
+    ? record.size_options
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    : [];
+  const sizeOptions: SizeTemplateFormOption[] = rawSizeOptions.map((item) => {
+        const itemUnit = textValue(item.size_unit ?? item.sizeUnit);
+        const normalizedUnit: SizeTemplateUnit = itemUnit === 'mm' || itemUnit === 'cm' ? itemUnit : 'in';
+        const flatValues = toSizeTemplateUnitValues(item);
+        const nestedUnits: Record<SizeTemplateUnit, SizeTemplateUnitValues | null> = {
+          in: item.in && typeof item.in === 'object' ? toSizeTemplateUnitValues(item.in) : null,
+          mm: item.mm && typeof item.mm === 'object' ? toSizeTemplateUnitValues(item.mm) : null,
+          cm: item.cm && typeof item.cm === 'object' ? toSizeTemplateUnitValues(item.cm) : null
+        };
+        if (!nestedUnits.in && !nestedUnits.mm && !nestedUnits.cm) nestedUnits[normalizedUnit] = flatValues;
+        return {
+          id: textValue(item.id ?? item.option_id).trim() || undefined,
+          value: textValue(item.value),
+          label: textValue(item.label || item.value),
+          disabled: Boolean(item.disabled),
+          size_unit: normalizedUnit,
+          page_count: numberValue(item.page_count) || numberValue(record.page_count),
+          spine_width_mode: (
+            item.spine_width_mode === 'by_page_count'
+            || recordValue(item.in).spine_width_mode === 'by_page_count'
+            || recordValue(item.mm).spine_width_mode === 'by_page_count'
+            || recordValue(item.cm).spine_width_mode === 'by_page_count'
+          ) ? 'by_page_count' : 'fixed',
+          in: nestedUnits.in,
+          mm: nestedUnits.mm,
+          cm: nestedUnits.cm
+        };
+  });
+  const sizeUnit = textValue(record.size_unit);
+  if (sizeOptions.length === 0 && textValue(record.size_option).trim()) {
+    const currentUnit: SizeTemplateUnit = sizeUnit === 'mm' || sizeUnit === 'cm' ? sizeUnit : 'in';
+    const currentValues = toSizeTemplateUnitValues(record);
+    sizeOptions.push({
+      id: textValue(record.size_option).trim(),
+      value: textValue(record.size_option).trim(),
+      label: textValue(record.size_option).trim(),
+      disabled: false,
+      size_unit: currentUnit,
+      page_count: numberValue(record.page_count),
+      spine_width_mode: record.spine_width_mode === 'by_page_count' ? 'by_page_count' : 'fixed',
+      in: currentUnit === 'in' ? currentValues : null,
+      mm: currentUnit === 'mm' ? currentValues : null,
+      cm: currentUnit === 'cm' ? currentValues : null
+    });
+  }
+  return {
+    ...toSizeTemplateFormSizeData(record),
+    size_option: record.size_option == null ? null : textValue(record.size_option),
+    size_unit: (sizeUnit === 'mm' || sizeUnit === 'cm' ? sizeUnit : 'in'),
+    size_unit_options: unitOptions.length > 0 ? unitOptions : ['in', 'mm', 'cm'],
+    size_options: sizeOptions,
+    status: textValue(record.status) || 'ready'
+  };
+}
+
+function toFontLayoutTemplate(value: unknown, includeDetails = true): FontLayoutTemplate {
+  const unwrapped = unwrapApiData(value);
+  const root = recordValue(unwrapped);
+  const record = recordValue(root.font_template ?? root.fontTemplate ?? root.template ?? unwrapped);
+  const sizeTemplateId = numberValue(record.size_template_id ?? record.sizeTemplateId);
+  const fontId = numberValue(record.font_id ?? record.fontId);
+  const canvas = recordValue(record.canvas);
+  const rawOptions = recordValue(record.options);
+  const syncedSizeOptionIdsValue = record.synced_size_option_ids ?? record.syncedSizeOptionIds;
+  const syncedSizeOptionIds = Array.isArray(syncedSizeOptionIdsValue)
+    ? syncedSizeOptionIdsValue.map(textValue).filter(Boolean)
+    : undefined;
+  const isSyncedValue = record.is_synced ?? record.isSynced;
+  const syncRequiredValue = record.sync_required ?? record.syncRequired;
+  const canvasWidth = Number(canvas.width);
+  const canvasHeight = Number(canvas.height);
+  const canvasDpi = Number(canvas.dpi);
+  return {
+    id: numberValue(record.id),
+    shopId: numberValue(record.shop_id ?? record.shopId),
+    ...(sizeTemplateId > 0 ? { sizeTemplateId } : {}),
+    safeDistance: Math.max(0, numberValue(record.safe_distance ?? record.safeDistance ?? rawOptions.safe_distance)),
+    name: textValue(record.name || record.template_name || record.font_name || `字体布局 ${record.id || ''}`).trim(),
+    description: textValue(record.description),
+    ...(fontId > 0 ? { fontId } : {}),
+    fontName: textValue(record.font_name ?? record.fontName),
+    createdAt: textValue(record.created_at),
+    updatedAt: textValue(record.updated_at),
+    ...(textValue(record.size_option).trim() ? { sizeOption: textValue(record.size_option).trim() } : {}),
+    ...(canvasWidth > 0 && canvasHeight > 0
+      ? {
+        canvas: {
+          width: numberValue(canvas.width),
+          height: numberValue(canvas.height),
+          ...(canvasDpi > 0 ? { dpi: canvasDpi } : {})
+        }
+      }
+      : {}),
+    ...(syncedSizeOptionIds ? { syncedSizeOptionIds } : {}),
+    ...(typeof isSyncedValue === 'boolean' ? { isSynced: isSyncedValue } : {}),
+    ...(typeof syncRequiredValue === 'boolean' ? { syncRequired: syncRequiredValue } : {}),
+    ...(includeDetails && Array.isArray(record.elements)
+      ? { elements: record.elements.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object')) }
+      : {}),
+    ...(includeDetails && record.options && typeof record.options === 'object' && !Array.isArray(record.options)
+      ? { options: record.options as Record<string, unknown> }
+      : {})
+  };
+}
+
+function normalizeFontLayoutTemplateList(value: unknown): FontLayoutTemplate[] {
+  const data = recordValue(unwrapApiData(value));
+  const items = Array.isArray(data.items) ? data.items : Array.isArray(unwrapApiData(value)) ? unwrapApiData(value) as unknown[] : [];
+  return items.map((item) => toFontLayoutTemplate(item, false));
+}
+
+function toSizeTemplate(value: unknown): SizeTemplate {
+  const record = recordValue(namedApiValue(value, 'size_template'));
+  const productNames = Array.isArray(record.product_names)
+    ? record.product_names.map(textValue).filter(Boolean)
+    : [];
+  const sizeForm = toSizeTemplateFormData(record.size_form);
+  const layoutTemplate = recordValue(record.layout_template ?? record.layoutTemplate);
+  const fontLayoutTemplates = Array.isArray(record.font_layout_templates)
+    ? record.font_layout_templates.map((item) => toFontLayoutTemplate(item, false))
+    : [];
+  const rawFontTemplateIds = record.font_layout_template_ids ?? record.font_template_ids;
+  const explicitFontTemplateIds = Array.isArray(rawFontTemplateIds)
+    ? rawFontTemplateIds.map(numberValue).filter((id) => id > 0)
+    : [];
+  return {
+    id: numberValue(record.id),
+    shopId: numberValue(record.shop_id),
+    shop: textValue(record.shop),
+    shopName: textValue(record.shop_name),
+    name: textValue(record.template_name || record.name || productNames[0] || `尺寸模板 ${record.id || ''}`).trim(),
+    product: productNames[0] || '',
+    products: productNames,
+    sizeForm,
+    fontLayoutTemplates,
+    fontLayoutTemplateIds: explicitFontTemplateIds.length > 0
+      ? explicitFontTemplateIds
+      : fontLayoutTemplates.map((template) => template.id).filter((id) => id > 0),
+    unit: sizeForm.size_unit,
+    singleWidth: sizeForm.single_side_width,
+    singleHeight: sizeForm.single_side_height,
+    spineWidth: sizeForm.spine_width,
+    bleed: sizeForm.bleed,
+    spineBleed: sizeForm.spine_bleed,
+    pages: sizeForm.page_count || 1,
+    enabled: true,
+    notes: '',
+    layoutTemplate: Object.keys(layoutTemplate).length > 0 ? layoutTemplate : undefined,
+    createdAt: textValue(record.created_at),
+    updatedAt: textValue(record.updated_at)
+  };
+}
+
+function normalizeSizeTemplateList(value: unknown): SizeTemplate[] {
+  const data = recordValue(unwrapApiData(value));
+  const items = Array.isArray(data.items) ? data.items : Array.isArray(unwrapApiData(value)) ? unwrapApiData(value) as unknown[] : [];
+  return items.map(toSizeTemplate);
+}
+
+function listItems(value: unknown): unknown[] {
+  const unwrapped = unwrapApiData(value);
+  if (Array.isArray(unwrapped)) return unwrapped;
+  const record = recordValue(unwrapped);
+  return Array.isArray(record.items) ? record.items : [];
+}
+
+function normalizeFontLayoutCanvas(value: unknown): FontLayoutCanvas {
+  const record = recordValue(value);
+  return {
+    width: Math.max(1, numberValue(record.width) || 1000),
+    height: Math.max(1, numberValue(record.height) || 800),
+    ...(numberValue(record.dpi) > 0 ? { dpi: numberValue(record.dpi) } : {})
+  };
+}
+
+function normalizeLayers(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    : [];
+}
+
+function normalizeFontLayoutLayerData(value: unknown) {
+  const record = recordValue(value);
+  return {
+    objects: normalizeLayers(record.objects),
+    animations: normalizeLayers(record.animations),
+    styles: normalizeLayers(record.styles),
+    dataSources: normalizeLayers(record.dataSources ?? record.data_sources),
+  };
+}
+
+function fontLayoutLayerPayload(value: FontLayoutLibraryPayload['layers']) {
+  return value;
+}
+
+function normalizeCatalogSizeOption(value: unknown): CatalogSizeOption {
+  const record = recordValue(value);
+  const nestedFieldsRecord = recordValue(record.fields);
+  const fieldsRecord = Object.keys(nestedFieldsRecord).length > 0 ? nestedFieldsRecord : record;
+  const unitValuesRecord = recordValue(fieldsRecord.unit_values ?? fieldsRecord.unitValues);
+  const normalizeUnitMetric = (key: string): Record<SizeTemplateUnit, number> => {
+    const metric = recordValue(unitValuesRecord[key]);
+    return { in: numberValue(metric.in), mm: numberValue(metric.mm), cm: numberValue(metric.cm) };
+  };
+  const hasUnitValues = Object.keys(unitValuesRecord).length > 0;
+  const fields: CatalogSizeOptionFields = {
+    size_unit: fieldsRecord.size_unit === 'mm' || fieldsRecord.size_unit === 'cm' ? fieldsRecord.size_unit : 'in',
+    single_side_width: numberValue(fieldsRecord.single_side_width),
+    single_side_height: numberValue(fieldsRecord.single_side_height),
+    bleed: numberValue(fieldsRecord.bleed),
+    spine_width: numberValue(fieldsRecord.spine_width),
+    spine_bleed: numberValue(fieldsRecord.spine_bleed),
+    ...(hasUnitValues ? { unit_values: {
+      single_side_width: normalizeUnitMetric('single_side_width'),
+      single_side_height: normalizeUnitMetric('single_side_height'),
+      bleed: normalizeUnitMetric('bleed'),
+      spine_width: normalizeUnitMetric('spine_width'),
+      spine_bleed: normalizeUnitMetric('spine_bleed')
+    } } : {})
+  };
+  return {
+    id: textValue(record.id ?? record.size_option_id ?? record.value).trim(),
+    label: textValue(record.label ?? record.name ?? record.id ?? record.value).trim(),
+    fields
+  };
+}
+
+function normalizeMountedSizeLayout(value: unknown): MountedSizeLayout {
+  const root = recordValue(value);
+  const record = recordValue(root.size_layout ?? root.sizeLayout ?? value);
+  return {
+    sizeOptionId: textValue(record.size_option_id ?? record.sizeOptionId).trim(),
+    layers: normalizeLayers(record.layers),
+    canvas: normalizeFontLayoutCanvas(record.canvas)
+  };
+}
+
+function normalizeMountedFontLayout(value: unknown): MountedFontLayout {
+  const root = recordValue(unwrapApiData(value));
+  const record = recordValue(root.font_layout ?? root.fontLayout ?? root.layout ?? root);
+  const rawSizeLayouts = record.size_layouts ?? record.sizeLayouts;
+  const sizeLayouts = Array.isArray(rawSizeLayouts)
+    ? rawSizeLayouts.map((item) => normalizeMountedSizeLayout(item))
+    : [];
+  return {
+    id: textValue(record.id ?? record.layout_id ?? record.layoutId).trim(),
+    fontLayoutTemplateId: numberValue(record.font_layout_template_id ?? record.fontLayoutTemplateId),
+    name: textValue(record.name || `布局 ${record.id || ''}`).trim(),
+    previewImage: apiFileUrl(record.preview_image ?? record.previewImage),
+    sizeLayouts
+  };
+}
+
+function mountedFontLayoutsFromResponse(value: unknown): MountedFontLayout[] {
+  const unwrapped = unwrapApiData(value);
+  const root = recordValue(unwrapped);
+  const template = recordValue(root.size_template ?? root.sizeTemplate ?? unwrapped);
+  const rawLayouts = template.font_layouts ?? template.fontLayouts ?? root.items ?? root.layouts;
+  if (Array.isArray(rawLayouts)) return rawLayouts.map(normalizeMountedFontLayout);
+
+  const direct = normalizeMountedFontLayout(unwrapped);
+  return direct.id ? [direct] : [];
+}
+
+function normalizeSafeDistance(value: unknown) {
+  const record = recordValue(value);
+  return {
+    top: numberValue(record.top),
+    right: numberValue(record.right),
+    bottom: numberValue(record.bottom),
+    left: numberValue(record.left)
+  };
+}
+
+function normalizeCatalogSizeTemplate(value: unknown): CatalogSizeTemplate {
+  const record = recordValue(namedApiValue(value, 'size_template'));
+  const rawOptions = Array.isArray(record.size_options) ? record.size_options : [];
+  const options = rawOptions.length
+    ? rawOptions.map(normalizeCatalogSizeOption)
+    : [];
+  const selectedOptionId = rawOptions.find((option) => recordValue(option).select === true);
+  const fontLayouts = Array.isArray(record.font_layouts)
+    ? record.font_layouts.map(normalizeMountedFontLayout)
+    : [];
+  const products = Array.isArray(record.applicable_products)
+    ? record.applicable_products.map(textValue).filter(Boolean)
+    : Array.isArray(record.product_names)
+      ? record.product_names.map(textValue).filter(Boolean)
+      : [];
+  const pageCountOptions = Array.isArray(record.page_count_options)
+    ? record.page_count_options.map(numberValue).filter((count) => count > 0)
+    : [];
+  const info = Array.isArray(record.size_template_info)
+    ? record.size_template_info.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+    : [];
+  return {
+    id: numberValue(record.id),
+    ...(numberValue(record.product_id ?? record.productId) > 0 ? { productId: numberValue(record.product_id ?? record.productId) } : {}),
+    ...(numberValue(record.selected_font_layout_id ?? record.selectedFontLayoutId) > 0
+      ? { selectedFontLayoutId: numberValue(record.selected_font_layout_id ?? record.selectedFontLayoutId) }
+      : {}),
+    ...(textValue(record.product_category_name ?? record.productCategoryName).trim() ? { productCategoryName: textValue(record.product_category_name ?? record.productCategoryName).trim() } : {}),
+    shopId: numberValue(record.shop_id ?? record.shopId),
+    shop: textValue(record.shop),
+    shopName: textValue(record.shop_name ?? record.shop),
+    name: textValue(record.name ?? record.template_name).trim(),
+    previewImage: apiFileUrl(record.preview_image ?? record.previewImage),
+    applicableProducts: products,
+    backgroundColor: textValue(record.background_color ?? record.backgroundColor),
+    minSpineWidth: numberValue(record.min_spine_width ?? record.minSpineWidth),
+    maxSpineWidth: numberValue(record.max_spine_width ?? record.maxSpineWidth),
+    paperThicknessMm: numberValue(record.paper_thickness_mm ?? record.paperThicknessMm),
+    spineWidthBasis: numberValue(record.spine_width_basis ?? record.spineWidthBasis) === 1 ? 1 : 0,
+    coverSafeDistance: normalizeSafeDistance(record.cover_safe_distance ?? record.coverSafeDistance),
+    selectedSizeOptionId: textValue(record.selected_size_option_id ?? record.selectedSizeOptionId).trim()
+      || normalizeCatalogSizeOption(selectedOptionId).id
+      || options[0]?.id
+      || '',
+    displayUnit: record.display_unit === 'mm' || record.display_unit === 'cm' ? record.display_unit : 'in',
+    pageCount: Math.max(1, numberValue(record.page_count) || 1),
+    pageCountOptions,
+    sizeOptions: options,
+    sizeTemplateInfo: info,
+    fontLayouts,
+    createdAt: textValue(record.created_at ?? record.createdAt),
+    updatedAt: textValue(record.updated_at ?? record.updatedAt)
+  };
+}
+
+function normalizeFontLayoutLibraryTemplate(value: unknown): FontLayoutLibraryTemplate {
+  const record = recordValue(namedApiValue(value, 'font_layout_template'));
+  const isCurrentSizeTemplateLayout = record.is_current_size_template_layout ?? record.isCurrentSizeTemplateLayout;
+  const layersSource = textValue(record.layers_source ?? record.layersSource);
+  const usingBaseLayers = record.using_base_layers ?? record.usingBaseLayers;
+  const rawSortKey = textValue(record.sort_key ?? record.sortKey).trim();
+  let sortKey = rawSortKey;
+  if (rawSortKey.startsWith('"') && rawSortKey.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(rawSortKey);
+      if (typeof parsed === 'string') sortKey = parsed.trim();
+    } catch {
+      // Keep non-JSON strings unchanged for backwards compatibility.
+    }
+  }
+  return {
+    id: numberValue(record.id),
+    shopId: numberValue(record.shop_id ?? record.shopId),
+    ...(numberValue(record.product_id ?? record.productId) > 0 ? { productId: numberValue(record.product_id ?? record.productId) } : {}),
+    ...(textValue(record.product_category_name ?? record.productCategoryName).trim() ? { productCategoryName: textValue(record.product_category_name ?? record.productCategoryName).trim() } : {}),
+    name: textValue(record.name ?? record.template_name).trim(),
+    sortKey,
+    previewImage: apiFileUrl(record.preview_image ?? record.previewImage),
+    layers: normalizeFontLayoutLayerData(record.layers),
+    ...(typeof isCurrentSizeTemplateLayout === 'boolean'
+      ? { isCurrentSizeTemplateLayout }
+      : {}),
+    ...(layersSource === 'size_variant' || layersSource === 'base'
+      ? { layersSource: layersSource as 'size_variant' | 'base' }
+      : {}),
+    ...(typeof usingBaseLayers === 'boolean'
+      ? { usingBaseLayers }
+      : {}),
+    ...(textValue(record.message).trim() ? { message: textValue(record.message) } : {}),
+    createdAt: textValue(record.created_at ?? record.createdAt),
+    updatedAt: textValue(record.updated_at ?? record.updatedAt)
+  };
+}
+
+function catalogSizeTemplatePayload(payload: CatalogSizeTemplatePayload): Record<string, unknown> {
+  return {
+    ...(payload.productId !== undefined && payload.productId > 0 ? { product_id: payload.productId } : {}),
+    shop_id: payload.shopId,
+    name: payload.name,
+    preview_image: payload.previewImage,
+    background_color: payload.backgroundColor,
+    min_spine_width: payload.minSpineWidth,
+    max_spine_width: payload.maxSpineWidth,
+    paper_thickness_mm: payload.paperThicknessMm,
+    spine_width_basis: payload.spineWidthBasis,
+    cover_safe_distance: payload.coverSafeDistance,
+    display_unit: payload.displayUnit,
+    page_count: payload.pageCount,
+    page_count_options: payload.pageCountOptions,
+    size_template_info: payload.sizeTemplateInfo
+  };
+}
+
+function flatSizeOptionPayload(option: SizeTemplateOptionPayload): Record<string, unknown> {
+  return {
+    id: option.id,
+    label: option.label,
+    size_unit: option.size_unit,
+    single_side_width: option.single_side_width,
+    single_side_height: option.single_side_height,
+    bleed: option.bleed,
+    spine_width: option.spine_width,
+    spine_bleed: option.spine_bleed,
+    spine_width_mode: option.spine_width_mode,
+    ...(option.select !== undefined ? { select: option.select } : {})
+  };
+}
+
+function sizeTemplatePayload(
+  payload: Partial<SizeTemplatePayload>,
+  includeSizeOptions = true,
+  includeShopId = true
+): Record<string, unknown> {
+  return {
+    ...(includeShopId && payload.shopId !== undefined ? { shop_id: payload.shopId } : {}),
+    ...(payload.name !== undefined ? { template_name: payload.name } : {}),
+    ...(payload.products !== undefined ? { product_names: payload.products } : {}),
+    ...(payload.sizeOption !== undefined ? { size_option: payload.sizeOption } : {}),
+    ...(payload.unit !== undefined ? { size_unit: payload.unit } : {}),
+    ...(payload.pageCount !== undefined ? { page_count: payload.pageCount } : {}),
+    ...(payload.pageCountArr !== undefined ? { page_count_arr: payload.pageCountArr } : {}),
+    ...(includeSizeOptions && payload.sizeOptions !== undefined
+      ? { size_options: payload.sizeOptions.map(flatSizeOptionPayload) }
+      : {})
+  };
+}
+
+function templateImportResult(value: unknown): TemplateImportAnalyzeResult {
+  return unwrapApiData(value) as TemplateImportAnalyzeResult;
+}
+
+function normalizeFontList(value: unknown): FontLibraryItem[] {
+  const unwrapped = unwrapApiData(value);
+  const data = recordValue(unwrapped);
+  const items = Array.isArray(unwrapped) ? unwrapped : Array.isArray(data.items) ? data.items : (data.id !== undefined ? [data] : []);
+  return items.map((item) => {
+    const record = recordValue(item);
+    return {
+      id: numberValue(record.id),
+      shopId: numberValue(record.shop_id ?? record.shopId) || undefined,
+      name: textValue(record.font_name),
+      family: textValue(record.font_family),
+      preferredName: textValue(record.font_preferred),
+      englishName: textValue(record.font_en),
+      allName: textValue(record.font_all_name),
+      postscriptName: textValue(record.post_script_name ?? record.postscript_name),
+      filePath: apiFileUrl(firstValue(record, 'file_path', 'file_url', 'oss_url', 'url')),
+      enabled: record.enabled !== false && record.enabled !== 0
+    };
+  });
+}
+
+function normalizeFontListPage(value: unknown): { items: FontLibraryItem[]; total: number; limit: number; offset: number } {
+  const unwrapped = unwrapApiData(value);
+  const data = recordValue(unwrapped);
+  const items = normalizeFontList(value);
+  return {
+    items,
+    total: data.total === undefined ? items.length : numberValue(data.total),
+    limit: numberValue(data.limit) || items.length,
+    offset: numberValue(data.offset)
+  };
 }
 
 function defaultUser(): LocalUserProfile {
@@ -233,18 +974,106 @@ function saveTemplateDocument(document: AlbumTemplateDocument): TemplateSummary 
 }
 
 export const browserAlbumApi = {
+  products: {
+    list: async (filters: { search?: string; shopId?: number; limit?: number; offset?: number } = {}): Promise<ProductCategory[]> => normalizeProducts(await apiRequest<unknown>({
+      method: 'GET',
+      url: '/products',
+      params: {
+        limit: filters.limit ?? 100,
+        offset: filters.offset ?? 0,
+        search: filters.search || undefined,
+        shop_id: filters.shopId
+      }
+    })),
+    get: async (productId: number): Promise<ProductCategory> => toProductCategory(unwrapApiData(await apiRequest<unknown>({ method: 'GET', url: `/products/${productId}` }))),
+    create: async (payload: ProductCategoryPayload): Promise<ProductCategory> => toProductCategory(unwrapApiData(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/products',
+      data: { name: payload.name, description: payload.description ?? '', product_names: payload.productNames, shop_ids: payload.shopIds, enabled: payload.enabled ?? true }
+    }))),
+    update: async (productId: number, payload: Partial<ProductCategoryPayload>): Promise<ProductCategory> => toProductCategory(unwrapApiData(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/products/${productId}`,
+      data: {
+        ...(payload.name !== undefined ? { name: payload.name } : {}),
+        ...(payload.description !== undefined ? { description: payload.description } : {}),
+        ...(payload.productNames !== undefined ? { product_names: payload.productNames } : {}),
+        ...(payload.shopIds !== undefined ? { shop_ids: payload.shopIds } : {}),
+        ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {})
+      }
+    }))),
+    delete: async (productId: number): Promise<void> => { await apiRequest<unknown>({ method: 'DELETE', url: `/products/${productId}` }); }
+  },
   shops: {
     list: async (): Promise<Shop[]> => normalizeShops(await apiRequest<unknown>({
       method: 'GET',
       url: '/shops'
-    }))
+    })),
+    get: async (shopId: number): Promise<Shop> => toShop(unwrapApiData(await apiRequest<unknown>({
+      method: 'GET',
+      url: `/shops?shop_id=${encodeURIComponent(shopId)}`
+    }))),
+    create: async (payload: ShopPayload): Promise<Shop> => toShop(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/shops',
+      data: {
+        shop: payload.shop,
+        shop_name: payload.shopName,
+        products: payload.products
+      }
+    }).then((response) => {
+      if (response && typeof response === 'object' && !Array.isArray(response) && 'data' in response) {
+        return (response as { data: unknown }).data;
+      }
+      return response;
+    })),
+    update: async (shopId: number, payload: ShopPayload): Promise<Shop> => toShop(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/shops/${shopId}`,
+      data: {
+        shop: payload.shop,
+        shop_name: payload.shopName,
+        products: payload.products
+      }
+    }).then((response) => {
+      if (response && typeof response === 'object' && !Array.isArray(response) && 'data' in response) {
+        return (response as { data: unknown }).data;
+      }
+      return response;
+    })),
+    delete: async (shopId: number): Promise<void> => {
+      await apiRequest<unknown>({ method: 'DELETE', url: `/shops/${shopId}` });
+    }
   },
   orders: {
-    list: async (): Promise<Order[]> => normalizeOrders(await apiRequest<unknown>({
+    list: async (filters: OrderListFilters = {}): Promise<OrderListResult> => normalizeOrderList(await apiRequest<unknown>({
       method: 'GET',
       url: '/orders',
-      params: { limit: 50 }
+      params: {
+        limit: filters.limit ?? 20,
+        pages: filters.pages ?? 1,
+        order_number: filters.orderNumber || undefined,
+        shop: filters.shop || undefined,
+        status: filters.status
+      }
     })),
+    statuses: async (): Promise<OrderStatusDefinition[]> => normalizeOrderStatuses(await apiRequest<unknown>({
+      method: 'GET',
+      url: '/orders/statuses'
+    })),
+    saveTemplateJson: async (
+      order: Pick<Order, 'id' | 'orderNo'>,
+      templateJson: Record<string, unknown>
+    ): Promise<void> => {
+      await apiRequest<unknown>({
+        method: 'PUT',
+        url: `/orders/${encodeURIComponent(order.id)}/template-json`,
+        data: {
+          order_number: order.orderNo,
+          template_json: templateJson
+        }
+      });
+    },
     printImage: async (order: Pick<Order, 'id' | 'orderNo'>): Promise<string> => printImageValue(
       await apiRequest<unknown>({
         method: 'POST',
@@ -254,7 +1083,43 @@ export const browserAlbumApi = {
           order_number: order.orderNo
         }
       })
-    )
+    ),
+    exportTemplate: async (
+      order: Pick<Order, 'id' | 'orderNo'>,
+      format: OrderTemplateExportFormat
+    ): Promise<OrderTemplateExportFile> => templateExportValue(
+      await apiRequest<unknown>({
+        method: 'POST',
+        url: '/orders/template-export',
+        timeout: 120_000,
+        data: {
+          order_id: order.id,
+          order_number: order.orderNo,
+          format
+        }
+      })
+    ),
+    sendPreviewImages: async (order: Pick<Order, 'id' | 'orderNo'>): Promise<void> => {
+      await apiRequest<unknown>({
+        method: 'POST',
+        url: '/orders/preview-images/send',
+        timeout: 120_000,
+        data: {
+          order_id: order.id,
+          order_number: order.orderNo
+        }
+      });
+    },
+    advanceStatus: async (order: Pick<Order, 'id' | 'orderNo'>): Promise<void> => {
+      await apiRequest<unknown>({
+        method: 'POST',
+        url: '/orders/status/advance',
+        data: {
+          order_id: order.id,
+          order_number: order.orderNo
+        }
+      });
+    }
   },
   templates: {
     list: async (): Promise<TemplateSummary[]> => readStorage(storageKeys.templates, []),
@@ -275,6 +1140,462 @@ export const browserAlbumApi = {
         updatedAt: now
       };
     }
+  },
+  sizeTemplates: {
+    list: async (
+      filters: number | { shopId?: number; limit?: number; offset?: number } = {}
+    ): Promise<SizeTemplate[]> => {
+      const normalized = typeof filters === 'number' ? { shopId: filters } : filters;
+      return normalizeSizeTemplateList(await apiRequest<unknown>({
+        method: 'GET',
+        url: '/size-templates',
+        params: {
+          shop_id: normalized.shopId,
+          limit: normalized.limit ?? 20,
+          offset: normalized.offset ?? 0
+        }
+      }));
+    },
+    get: async (templateId: number): Promise<SizeTemplate> => toSizeTemplate(await apiRequest<unknown>({
+      method: 'GET',
+      url: `/size-templates/${templateId}`
+    })),
+    form: async (
+      templateId: number,
+      filters: { sizeOption?: string; unit?: SizeTemplateFormData['size_unit'] } = {}
+    ): Promise<SizeTemplateFormData> => toSizeTemplateFormData(await apiRequest<unknown>({
+      method: 'GET',
+      url: `/size-templates/${templateId}/form`,
+      params: {
+        size_option: filters.sizeOption,
+        size_unit: filters.unit
+      }
+    })),
+    create: async (payload: SizeTemplatePayload): Promise<SizeTemplate> => toSizeTemplate(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/size-templates',
+      data: sizeTemplatePayload(payload)
+    })),
+    update: async (
+      templateId: number,
+      payload: Partial<SizeTemplatePayload>
+    ): Promise<SizeTemplate> => toSizeTemplate(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/size-templates/${templateId}`,
+      data: sizeTemplatePayload(payload, false, false)
+    })),
+    delete: async (templateId: number): Promise<void> => {
+      await apiRequest<unknown>({ method: 'DELETE', url: `/size-templates/${templateId}` });
+    },
+    options: {
+      create: async (templateId: number, payload: SizeTemplateOptionPayload): Promise<void> => {
+        await apiRequest<unknown>({
+          method: 'POST',
+          url: `/size-templates/${templateId}/options`,
+          data: payload
+        });
+      },
+      update: async (templateId: number, optionId: string, payload: SizeTemplateOptionPayload): Promise<void> => {
+        await apiRequest<unknown>({
+          method: 'PATCH',
+          url: `/size-templates/${templateId}/options/${encodeURIComponent(optionId)}`,
+          data: payload
+        });
+      },
+      delete: async (templateId: number, optionId: string): Promise<void> => {
+        await apiRequest<unknown>({
+          method: 'DELETE',
+          url: `/size-templates/${templateId}/options/${encodeURIComponent(optionId)}`
+        });
+      }
+    }
+  },
+  catalogSizeTemplates: {
+    list: async (filters: { shopId?: number; productId?: number; productName?: string; limit?: number; offset?: number } = {}): Promise<CatalogSizeTemplate[]> => (
+      listItems(await apiRequest<unknown>({
+        method: 'GET',
+        url: '/size-templates',
+        params: {
+          limit: filters.limit ?? 50,
+          offset: filters.offset ?? 0,
+          shop_id: filters.shopId,
+          product_id: filters.productId,
+          product_name: filters.productName
+        }
+      })).map(normalizeCatalogSizeTemplate)
+    ),
+    get: async (templateId: number): Promise<CatalogSizeTemplate> => normalizeCatalogSizeTemplate(await apiRequest<unknown>({
+      method: 'GET',
+      url: `/size-templates/${templateId}`
+    })),
+    create: async (payload: CatalogSizeTemplatePayload): Promise<CatalogSizeTemplate> => normalizeCatalogSizeTemplate(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/size-templates',
+      data: catalogSizeTemplatePayload(payload)
+    })),
+    update: async (templateId: number, payload: CatalogSizeTemplatePayload): Promise<CatalogSizeTemplate> => normalizeCatalogSizeTemplate(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/size-templates/${templateId}`,
+      data: catalogSizeTemplatePayload(payload)
+    })),
+    delete: async (templateId: number): Promise<void> => {
+      await apiRequest<unknown>({ method: 'DELETE', url: `/size-templates/${templateId}` });
+    },
+    uploadPreview: async (templateId: number, file: File): Promise<string> => {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      const response = await apiRequest<unknown>({
+        method: 'PUT',
+        url: `/size-templates/${templateId}/preview`,
+        data: formData
+      });
+      const record = recordValue(namedApiValue(response, 'size_template'));
+      const previewImage = apiFileUrl(record.preview_image ?? record.previewImage ?? record.url ?? record.file_url);
+      if (!previewImage) throw new Error('预览图上传成功，但接口未返回图片地址。');
+      return previewImage;
+    },
+    mountedLayouts: {
+      list: async (templateId: number): Promise<MountedFontLayout[]> => mountedFontLayoutsFromResponse(await apiRequest<unknown>({
+        method: 'GET',
+        url: `/size-templates/${templateId}/font-layouts`
+      })),
+      add: async (templateId: number, payload: AddMountedFontLayoutPayload): Promise<MountedFontLayout> => {
+        await apiRequest<unknown>({
+          method: 'POST',
+          url: `/size-templates/${templateId}/font-layouts`,
+          data: {
+            font_layout_template_id: payload.fontLayoutTemplateId,
+            source_size_option_id: payload.sourceSizeOptionId,
+            name: payload.name
+          }
+        });
+        const layouts = await browserAlbumApi.catalogSizeTemplates.mountedLayouts.list(templateId);
+        const layout = layouts.find((item) => item.fontLayoutTemplateId === payload.fontLayoutTemplateId && item.name === payload.name);
+        if (!layout) throw new Error('应用字体布局后未查询到布局实例');
+        return layout;
+      },
+      update: async (templateId: number, layoutId: string, payload: Partial<Pick<MountedFontLayout, 'name' | 'previewImage'>> & { sizeLayouts?: MountedSizeLayout[] }): Promise<MountedFontLayout> => {
+        await apiRequest<unknown>({
+          method: 'PATCH',
+          url: `/size-templates/${templateId}/font-layouts/${encodeURIComponent(layoutId)}`,
+          data: {
+            ...(payload.name !== undefined ? { name: payload.name } : {}),
+            ...(payload.previewImage !== undefined ? { preview_image: payload.previewImage } : {}),
+            ...(payload.sizeLayouts !== undefined ? { size_layouts: payload.sizeLayouts.map((item) => ({ size_option_id: item.sizeOptionId, layers: item.layers, canvas: item.canvas })) } : {})
+          }
+        });
+        const layout = (await browserAlbumApi.catalogSizeTemplates.mountedLayouts.list(templateId)).find((item) => item.id === layoutId);
+        if (!layout) throw new Error('修改后未查询到字体布局实例');
+        return layout;
+      },
+      delete: async (templateId: number, layoutId: string): Promise<void> => {
+        await apiRequest<unknown>({ method: 'DELETE', url: `/size-templates/${templateId}/font-layouts/${encodeURIComponent(layoutId)}` });
+      },
+      saveSize: async (templateId: number, layoutId: string, sizeOptionId: string, payload: SaveMountedSizeLayoutPayload): Promise<MountedSizeLayout> => {
+        await apiRequest<unknown>({
+          method: 'PUT',
+          url: `/size-templates/${templateId}/font-layouts/${encodeURIComponent(layoutId)}/sizes/${encodeURIComponent(sizeOptionId)}`,
+          data: { layers: payload.layers, canvas: payload.canvas }
+        });
+        const layout = (await browserAlbumApi.catalogSizeTemplates.mountedLayouts.list(templateId)).find((item) => item.id === layoutId);
+        if (!layout) throw new Error('保存后未查询到字体布局实例');
+        const sizeLayout = layout.sizeLayouts.find((item) => item.sizeOptionId === sizeOptionId);
+        if (!sizeLayout) throw new Error('接口未返回当前尺寸的字体布局');
+        return sizeLayout;
+      },
+      sync: async (templateId: number, layoutId: string, payload: SyncMountedFontLayoutPayload): Promise<MountedFontLayout> => {
+        await apiRequest<unknown>({
+          method: 'POST',
+          url: `/size-templates/${templateId}/font-layouts/${encodeURIComponent(layoutId)}/sync`,
+          data: {
+            source_size_option_id: payload.sourceSizeOptionId,
+            target_size_option_ids: payload.targetSizeOptionIds,
+            mode: payload.mode
+          }
+        });
+        const layout = (await browserAlbumApi.catalogSizeTemplates.mountedLayouts.list(templateId)).find((item) => item.id === layoutId);
+        if (!layout) throw new Error('同步后未查询到字体布局实例');
+        return layout;
+      }
+    }
+  },
+  fontLayoutLibrary: {
+    list: async (filters: { shopId?: number; productId?: number; search?: string; limit?: number; offset?: number } = {}): Promise<FontLayoutLibraryTemplate[]> => (
+      listItems(await apiRequest<unknown>({
+        method: 'GET',
+        url: '/font-layout-templates',
+        params: {
+          limit: filters.limit ?? 100,
+          offset: filters.offset ?? 0,
+          shop_id: filters.shopId,
+          product_id: filters.productId,
+          search: filters.search
+        }
+      })).map((item) => normalizeFontLayoutLibraryTemplate(item))
+    ),
+    get: async (templateId: number, options: { sizeTemplateId?: number; sizeOptionId?: string } = {}): Promise<FontLayoutLibraryTemplate> => normalizeFontLayoutLibraryTemplate(await apiRequest<unknown>({
+      method: 'GET',
+      url: `/font-layout-templates/${templateId}`,
+      params: {
+        size_template_id: options.sizeTemplateId,
+        size_option_id: options.sizeOptionId
+      }
+    })),
+    create: async (payload: FontLayoutLibraryPayload): Promise<FontLayoutLibraryTemplate> => normalizeFontLayoutLibraryTemplate(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/font-layout-templates',
+      data: {
+        shop_id: payload.shopId,
+        ...(payload.productId !== undefined ? { product_id: payload.productId } : {}),
+        name: payload.name,
+        sort_key: payload.sortKey,
+        layers: fontLayoutLayerPayload(payload.layers)
+      }
+    })),
+    update: async (templateId: number, payload: Partial<FontLayoutLibraryPayload>): Promise<FontLayoutLibraryTemplate> => normalizeFontLayoutLibraryTemplate(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/font-layout-templates/${templateId}`,
+      data: {
+        ...(payload.shopId !== undefined ? { shop_id: payload.shopId } : {}),
+        ...(payload.productId !== undefined ? { product_id: payload.productId } : {}),
+        ...(payload.name !== undefined ? { name: payload.name } : {}),
+        ...(payload.sortKey !== undefined ? { sort_key: payload.sortKey } : {}),
+        ...(payload.layers !== undefined ? { layers: fontLayoutLayerPayload(payload.layers) } : {})
+      }
+    })),
+    delete: async (templateId: number): Promise<void> => {
+      await apiRequest<unknown>({ method: 'DELETE', url: `/font-layout-templates/${templateId}` });
+    },
+    uploadPreview: async (templateId: number, file: File): Promise<FontLayoutLibraryTemplate> => {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      return normalizeFontLayoutLibraryTemplate(await apiRequest<unknown>({
+        method: 'PUT',
+        url: `/font-layout-templates/${templateId}/preview`,
+        data: formData
+      }));
+    },
+    sizeOptions: async (templateId: number, sizeTemplateId: number): Promise<FontLayoutSizeOptionStatus[]> => {
+      const response = unwrapApiData(await apiRequest<unknown>({
+        method: 'GET',
+        url: `/font-layout-templates/${templateId}/size-options`,
+        params: { size_template_id: sizeTemplateId }
+      }));
+      const root = recordValue(response);
+      const items = Array.isArray(response)
+        ? response
+        : Array.isArray(root.items)
+          ? root.items
+          : Array.isArray(root.size_options)
+            ? root.size_options
+            : [];
+      return items.map((item) => {
+        const record = recordValue(item);
+        const source = textValue(record.layers_source ?? record.layersSource);
+        const hasVariant = record.has_size_variant ?? record.hasSizeVariant;
+        const usingBase = record.using_base_layers ?? record.usingBaseLayers;
+        return {
+          sizeOptionId: textValue(record.size_option_id ?? record.sizeOptionId ?? record.id),
+          ...(textValue(record.label).trim() ? { label: textValue(record.label) } : {}),
+          ...(typeof hasVariant === 'boolean' ? { hasSizeVariant: hasVariant } : {}),
+          ...(source === 'size_variant' || source === 'base' ? { layersSource: source } : {}),
+          ...(typeof usingBase === 'boolean' ? { usingBaseLayers: usingBase } : {}),
+          ...(textValue(record.message).trim() ? { message: textValue(record.message) } : {})
+        } satisfies FontLayoutSizeOptionStatus;
+      }).filter((item) => item.sizeOptionId);
+    },
+    syncSizeOptions: async (
+      templateId: number,
+      sizeTemplateId: number,
+      items: FontLayoutSizeOptionsSyncItem[]
+    ): Promise<FontLayoutSizeOptionsSyncResult> => {
+      const response = unwrapApiData(await apiRequest<unknown>({
+        method: 'POST',
+        url: `/font-layout-templates/${templateId}/sync-size-options`,
+        data: {
+          size_template_id: sizeTemplateId,
+          items: items.map((item) => ({
+            size_option_id: item.sizeOptionId,
+            layers: fontLayoutLayerPayload(item.layers)
+          }))
+        }
+      }));
+      const record = recordValue(response);
+      const justSynced = record.just_synced_size_option_ids ?? record.justSyncedSizeOptionIds;
+      const missing = record.missing_size_option_ids ?? record.missingSizeOptionIds;
+      const syncedCount = Number(record.synced_count ?? record.syncedCount);
+      return {
+        ...(Number.isFinite(syncedCount) ? { syncedCount } : {}),
+        justSyncedSizeOptionIds: Array.isArray(justSynced) ? justSynced.map(textValue).filter(Boolean) : [],
+        missingSizeOptionIds: Array.isArray(missing) ? missing.map(textValue).filter(Boolean) : [],
+        ...(textValue(record.message).trim() ? { message: textValue(record.message) } : {})
+      };
+    }
+  },
+  fontLayoutTemplates: {
+    list: async (filters: { shopId?: number; sizeTemplateId?: number; limit?: number; offset?: number } = {}): Promise<FontLayoutTemplate[]> => (
+      normalizeFontLayoutTemplateList(await apiRequest<unknown>({
+        method: 'GET',
+        url: '/font-templates',
+        params: {
+          limit: filters.limit ?? 500,
+          offset: filters.offset ?? 0,
+          shop_id: filters.shopId,
+          size_template_id: filters.sizeTemplateId
+        }
+      }))
+    ),
+    get: async (templateId: number, sizeOption?: string): Promise<FontLayoutTemplate> => (
+      toFontLayoutTemplate(await apiRequest<unknown>({
+        method: 'GET',
+        url: `/font-templates/${templateId}`,
+        params: sizeOption ? { size_option: sizeOption } : undefined
+      }))
+    ),
+    create: async (payload: { shopId: number; sizeTemplateId: number; name: string; description?: string; safeDistance?: number; elements: Record<string, unknown>[]; options?: Record<string, unknown> }): Promise<FontLayoutTemplate> => (
+      toFontLayoutTemplate(await apiRequest<unknown>({
+        method: 'POST',
+        url: '/font-templates',
+        data: {
+          shop_id: payload.shopId,
+          size_template_id: payload.sizeTemplateId,
+          name: payload.name,
+          description: payload.description ?? '',
+          elements: payload.elements,
+          options: {
+            ...(payload.options ?? {}),
+            safe_distance: payload.safeDistance ?? 0
+          }
+        }
+      }))
+    ),
+    update: async (templateId: number, payload: { shopId?: number; sizeTemplateId?: number; name?: string; description?: string; safeDistance?: number; elements?: Record<string, unknown>[]; options?: Record<string, unknown> }, sizeOption?: string): Promise<FontLayoutTemplate> => (
+      toFontLayoutTemplate(await apiRequest<unknown>({
+        method: 'PUT',
+        url: `/font-templates/${templateId}`,
+        params: sizeOption ? { size_option: sizeOption } : undefined,
+        data: {
+          ...(payload.shopId !== undefined ? { shop_id: payload.shopId } : {}),
+          ...(payload.sizeTemplateId !== undefined ? { size_template_id: payload.sizeTemplateId } : {}),
+          ...(payload.name !== undefined ? { name: payload.name } : {}),
+          ...(payload.description !== undefined ? { description: payload.description } : {}),
+          ...(payload.elements !== undefined ? { elements: payload.elements } : {}),
+          ...(payload.options !== undefined ? { options: {
+            ...payload.options,
+            ...(payload.safeDistance !== undefined ? { safe_distance: payload.safeDistance } : {})
+          } } : payload.safeDistance !== undefined ? { options: { safe_distance: payload.safeDistance } } : {})
+        }
+      }))
+    ),
+    syncSizeOptions: async (
+      templateId: number,
+      payload: { sizeOption: string; elements: Record<string, unknown>[]; canvas?: { width: number; height: number } }
+    ): Promise<FontLayoutSyncResult> => {
+      const response = unwrapApiData(await apiRequest<unknown>({
+        method: 'POST',
+        url: `/font-templates/${templateId}/sync-size-options`,
+        data: {
+          size_option: payload.sizeOption,
+          ...(payload.canvas ? { canvas: payload.canvas } : {}),
+          elements: payload.elements
+        }
+      }));
+      const record = recordValue(response);
+      const canvas = recordValue(record.canvas);
+      const canvasWidth = numberValue(canvas.width);
+      const canvasHeight = numberValue(canvas.height);
+      const canvasDpi = numberValue(canvas.dpi);
+      const syncedSizeOptionIdsValue = record.synced_size_option_ids ?? record.syncedSizeOptionIds;
+      return {
+        id: numberValue(record.id ?? templateId),
+        ...(numberValue(record.size_template_id) > 0 ? { sizeTemplateId: numberValue(record.size_template_id) } : {}),
+        sizeOption: textValue(record.size_option ?? payload.sizeOption),
+        ...(canvasWidth > 0 && canvasHeight > 0
+          ? { canvas: { width: canvasWidth, height: canvasHeight, ...(canvasDpi > 0 ? { dpi: canvasDpi } : {}) } }
+          : {}),
+        elements: Array.isArray(record.elements)
+          ? record.elements.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+          : [],
+        syncedSizeOptionIds: Array.isArray(syncedSizeOptionIdsValue)
+          ? syncedSizeOptionIdsValue.map(textValue).filter(Boolean)
+          : []
+      };
+    },
+    delete: async (templateId: number): Promise<void> => {
+      await apiRequest<unknown>({ method: 'DELETE', url: `/font-templates/${templateId}` });
+    }
+  },
+  templateImports: {
+    analyze: async (file: File, options: Record<string, unknown> = {}): Promise<TemplateImportAnalyzeResult> => {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      formData.append('options_json', JSON.stringify(options));
+      return templateImportResult(await apiRequest<unknown>({
+        method: 'POST',
+        url: '/template-imports/analyze',
+        data: formData,
+        timeout: 120_000
+      }));
+    },
+    finalize: async (
+      template: TemplateImportDraft,
+      sizeTemplateId?: number,
+      strictFonts = true
+    ): Promise<TemplateImportFinalizeResult> => unwrapApiData(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/template-imports/finalize',
+      timeout: 120_000,
+      data: {
+        template_json: template,
+        strict_fonts: strictFonts,
+        size_template_id: sizeTemplateId
+      }
+    })) as TemplateImportFinalizeResult
+  },
+  fonts: {
+    listPage: async ({
+      limit = 25,
+      offset = 0,
+      search,
+    }: { limit?: number; offset?: number; search?: string } = {}) => normalizeFontListPage(await apiRequest<unknown>({
+      method: 'GET',
+      url: '/fonts',
+      params: {
+        limit,
+        offset,
+        ...(search?.trim() ? { search: search.trim() } : {}),
+      }
+    })),
+    list: async ({
+      limit = 100,
+      offset = 0,
+      search,
+    }: { limit?: number; offset?: number; search?: string } = {}): Promise<FontLibraryItem[]> => normalizeFontList(await apiRequest<unknown>({
+      method: 'GET',
+      url: '/fonts',
+      params: {
+        limit,
+        offset,
+        ...(search?.trim() ? { search: search.trim() } : {}),
+      }
+    })),
+    upload: async (payload: FontUploadPayload): Promise<FontLibraryItem> => {
+      const formData = new FormData();
+      formData.append('file', payload.file, payload.file.name);
+      if (payload.fontName?.trim()) formData.append('font_name', payload.fontName.trim());
+      if (payload.fontFamily?.trim()) formData.append('font_family', payload.fontFamily.trim());
+      if (payload.enabled !== undefined) formData.append('enabled', String(payload.enabled));
+      return normalizeFontList(await apiRequest<unknown>({ method: 'POST', url: '/fonts/upload', data: formData, timeout: 120_000 }))[0];
+    },
+    update: async (fontId: number, payload: FontUpdatePayload): Promise<FontLibraryItem> => normalizeFontList(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/fonts/${fontId}`,
+      data: {
+        ...(payload.fontName !== undefined ? { font_name: payload.fontName } : {}),
+        ...(payload.fontFamily !== undefined ? { font_family: payload.fontFamily } : {}),
+        ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {})
+      }
+    }))[0]
   },
   exports: {
     list: async (): Promise<ExportHistoryEntry[]> => readStorage(storageKeys.exports, []),

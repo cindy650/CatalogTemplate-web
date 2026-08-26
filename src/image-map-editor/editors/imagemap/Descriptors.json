@@ -1,0 +1,273 @@
+{
+	"MARKER": [
+		{
+			"name": "标记",
+			"description": "",
+			"type": "marker",
+			"icon": {
+				"prefix": "fas",
+				"name": "map-marker-alt"
+			},
+			"option": {
+				"type": "i-text",
+				"text": "\uf3c5",
+				"fontFamily": "Font Awesome 5 Free",
+				"fontWeight": 900,
+				"fontSize": 60,
+				"width": 30,
+				"height": 30,
+				"editable": false,
+				"name": "新建标记"
+			}
+		}
+	],
+	"TEXT": [
+		{
+			"name": "文本",
+			"description": "",
+			"type": "text",
+			"icon": {
+				"prefix": "fas",
+				"name": "font"
+			},
+			"option": {
+				"type": "textbox",
+				"superType": "text",
+				"text": "",
+				"width": 240,
+				"height": 64,
+				"fontSize": 32,
+				"name": "新建文本",
+				"rules": ""
+			}
+		}
+	],
+	"IMAGE": [
+		{
+			"name": "图片",
+			"description": "",
+			"type": "image",
+			"icon": {
+				"prefix": "fas",
+				"name": "image"
+			},
+			"option": {
+				"type": "image",
+				"width": 400,
+				"height": 400,
+				"name": "新建图片",
+				"src": "./images/sample/transparentBg.png"
+			}
+		},
+		{
+			"name": "GIF",
+			"description": "",
+			"type": "gif",
+			"icon": {
+				"prefix": "fas",
+				"name": "image"
+			},
+			"option": {
+				"type": "gif",
+				"width": 400,
+				"height": 400,
+				"name": "新建 GIF",
+				"src": ""
+			}
+		}
+	],
+	"SHAPE": [
+		{
+			"name": "三角形",
+			"description": "",
+			"type": "shape",
+			"icon": {
+				"prefix": "fas",
+				"name": "play",
+				"style": {
+					"transform": "rotate(270deg)"
+				}
+			},
+			"option": {
+				"type": "triangle",
+				"width": 30,
+				"height": 30,
+				"name": "新建形状"
+			}
+		},
+		{
+			"name": "矩形",
+			"description": "",
+			"type": "shape",
+			"icon": {
+				"prefix": "fas",
+				"name": "stop"
+			},
+			"option": {
+				"type": "rect",
+				"width": 40,
+				"height": 40,
+				"name": "新建形状"
+			}
+		},
+		{
+			"name": "圆形",
+			"description": "",
+			"type": "shape",
+			"icon": {
+				"prefix": "fas",
+				"name": "circle"
+			},
+			"option": {
+				"type": "circle",
+				"radius": 30,
+				"name": "新建形状"
+			}
+		},
+		{
+			"name": "立方体",
+			"description": "",
+			"type": "shape",
+			"icon": {
+				"prefix": "fas",
+				"name": "cube"
+			},
+			"option": {
+				"type": "cube",
+				"width": 80,
+				"height": 80,
+				"name": "新建形状"
+			}
+		}
+	],
+	"DRAWING": [
+		{
+			"name": "多边形",
+			"description": "",
+			"type": "drawing",
+			"icon": {
+				"prefix": "fas",
+				"name": "draw-polygon"
+			},
+			"option": {
+				"type": "polygon",
+				"name": "新建多边形"
+			}
+		},
+		{
+			"name": "直线",
+			"description": "",
+			"type": "drawing",
+			"icon": {
+				"prefix": "fas",
+				"name": "minus"
+			},
+			"option": {
+				"type": "line",
+				"name": "新建直线"
+			}
+		},
+		{
+			"name": "箭头",
+			"description": "",
+			"type": "drawing",
+			"icon": {
+				"prefix": "fas",
+				"name": "long-arrow-alt-right"
+			},
+			"option": {
+				"type": "arrow",
+				"name": "新建箭头"
+			}
+		}
+	],
+	"ELEMENT": [
+		{
+			"name": "图表",
+			"description": "",
+			"type": "element",
+			"icon": {
+				"prefix": "fas",
+				"name": "chart-line"
+			},
+			"option": {
+				"superType": "element",
+				"type": "chart",
+				"name": "新建图表",
+				"width": 356,
+				"height": 356
+			}
+		},
+		{
+			"name": "元素",
+			"description": "",
+			"type": "element",
+			"icon": {
+				"prefix": "fab",
+				"name": "html5"
+			},
+			"option": {
+				"superType": "element",
+				"type": "element",
+				"width": 480,
+				"height": 270,
+				"name": "新建元素"
+			}
+		},
+		{
+			"name": "内嵌页面",
+			"description": "",
+			"type": "element",
+			"icon": {
+				"prefix": "fas",
+				"name": "window-maximize"
+			},
+			"option": {
+				"superType": "element",
+				"type": "iframe",
+				"width": 480,
+				"height": 270,
+				"name": "新建内嵌页面"
+			}
+		},
+		{
+			"name": "视频",
+			"description": "",
+			"type": "element",
+			"icon": {
+				"prefix": "fab",
+				"name": "youtube"
+			},
+			"option": {
+				"superType": "element",
+				"type": "video",
+				"width": 480,
+				"height": 270,
+				"name": "新建视频",
+				"autoplay": true,
+				"muted": true,
+				"loop": true
+			}
+		}
+	],
+	"SVG": [
+		{
+			"name": "默认",
+			"description": "",
+			"type": "default",
+			"icon": {
+				"prefix": "fas",
+				"name": "bezier-curve"
+			},
+			"option": {
+				"type": "svg",
+				"superType": "svg",
+				"width": 400,
+				"height": 400,
+				"name": "新建 SVG",
+				"loadType": "file",
+				"src": "./images/sample/chiller.svg"
+			}
+		}
+	]
+}

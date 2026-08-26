@@ -27,7 +27,7 @@ export function createGeneratedDocument(order: Order): AlbumTemplateDocument {
       fontSize: 22,
       fontFamily: 'Microsoft YaHei',
       fill: '#334155',
-      text: `客户：${order.customerName || '未填写'}    状态：${order.status || '未填写'}`
+      text: `客户：${order.customerName || '未填写'}    状态：${order.statusText || '未填写'}`
     },
     ...order.items.flatMap((item, index) => {
       const top = 170 + index * 110;

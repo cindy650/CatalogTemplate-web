@@ -1,0 +1,111 @@
+import { Button, Modal, Segmented, Tooltip } from 'antd';
+import i18next from 'i18next';
+import React from 'react';
+import { EditorThemeContext, type EditorTheme } from '../../theme';
+import { Flex } from '../flex';
+import { ShortcutHelp } from '../help';
+import Icon from '../icon/Icon';
+import AdsenseBanner from './AdsenseBanner';
+
+class Title extends React.Component {
+	static contextType = EditorThemeContext;
+	declare context: React.ContextType<typeof EditorThemeContext>;
+
+	state = {
+		visible: false,
+	};
+
+	handlers = {
+		goGithub: () => {
+			window.open('https://github.com/salgum1114/react-design-editor');
+		},
+		goDocs: () => {
+			window.open('https://salgum1114.github.io/react-design-editor/docs');
+		},
+		showHelp: () => {
+			this.setState({
+				visible: true,
+			});
+		},
+	};
+
+	render() {
+		const { visible } = this.state;
+		return (
+			<Flex className="rde-appbar" flex="1" alignItems="center">
+				<Flex className="rde-appbar-brand" flex="0 1 auto" alignItems="center">
+					<span className="rde-appbar-brand-name">React Design Editor</span>
+				</Flex>
+				<Flex className="rde-appbar-actions" flex="1" justifyContent="flex-end">
+					<AdsenseBanner />
+					<Segmented
+						aria-label="Editor theme"
+						className="rde-theme-switch"
+						onChange={value => this.context.setTheme(value as EditorTheme)}
+						options={[
+							{
+								label: (
+									<span className="rde-theme-switch-label">
+										<Icon className="rde-theme-switch-icon" name="sun" size={0.9} />
+										<span>浅色</span>
+									</span>
+								),
+								value: 'light',
+							},
+							{
+								label: (
+									<span className="rde-theme-switch-label">
+										<Icon className="rde-theme-switch-icon" name="moon" size={0.9} />
+										<span>深色</span>
+									</span>
+								),
+								value: 'dark',
+							},
+						]}
+						size="small"
+						value={this.context.theme}
+					/>
+					<Tooltip title={i18next.t('action.go-github')} styles={{ root: { fontSize: 16 } }}>
+						<Button
+							className="rde-action-btn rde-appbar-action"
+							shape="circle"
+							onClick={this.handlers.goGithub}
+						>
+							<Icon name="github" prefix="fab" />
+						</Button>
+					</Tooltip>
+					<Tooltip title={i18next.t('action.go-docs')} styles={{ root: { fontSize: 16 } }}>
+						<Button
+							className="rde-action-btn rde-appbar-action"
+							shape="circle"
+							onClick={this.handlers.goDocs}
+						>
+							<Icon name="book" prefix="fas" />
+						</Button>
+					</Tooltip>
+					<Tooltip title={i18next.t('action.shortcut-help')} styles={{ root: { fontSize: 16 } }}>
+						<Button
+							className="rde-action-btn rde-appbar-action"
+							shape="circle"
+							onClick={this.handlers.showHelp}
+						>
+							<Icon name="question" prefix="fas" />
+						</Button>
+					</Tooltip>
+				</Flex>
+				<Modal
+					rootClassName="rde-editor-modal"
+					open={visible}
+					onCancel={() => this.setState({ visible: false })}
+					closable={true}
+					footer={null}
+					width="50%"
+				>
+					<ShortcutHelp />
+				</Modal>
+			</Flex>
+		);
+	}
+}
+
+export default Title;

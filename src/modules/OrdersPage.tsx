@@ -13,8 +13,6 @@ const orderFields = [
   ['订单号', ['订单号', '订单编号', 'orderid', 'orderno']],
   ['店铺', ['店铺', 'shop', 'store']],
   ['产品', ['产品', '商品', 'product', 'item']],
-  ['规格/尺寸', ['规格/尺寸', '规格尺寸', 'specification', 'size']],
-  ['定制信息', ['定制信息', '自定义信息', '备注', 'custominfo', 'note']],
   ['付款方式', ['付款方式', 'payment', 'paymentmethod']],
   ['邮寄地址', ['邮寄地址', '收货地址', 'address', 'shippingaddress']],
   ['交易编号', ['交易编号', 'transactionid', 'transaction']],
@@ -67,7 +65,7 @@ export default function OrdersPage({
     ...orderFields.map(([label, candidates]) => ({
       title: label,
       key: label,
-      width: label === '邮寄地址' ? 320 : label === '定制信息' ? 260 : label === '产品' ? 200 : 140,
+      width: label === '邮寄地址' ? 320 : label === '产品' ? 200 : 140,
       render: (_: unknown, { item }: OrderTableRow) => {
         const value = readRawValue(item.raw, candidates) || '-';
         return <span className="order-cell-content">{value}</span>;

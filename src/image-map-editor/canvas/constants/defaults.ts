@@ -1,0 +1,115 @@
+import {
+	CanvasActions,
+	CanvasOption,
+	FabricObjectOption,
+	GridOption,
+	GuidelineOption,
+	RulerOption,
+	WorkareaObject,
+} from '../models';
+
+export const canvasOption: CanvasOption = {
+	preserveObjectStacking: true,
+	width: 300,
+	height: 150,
+	selection: true,
+	defaultCursor: 'default',
+	backgroundColor: '#f3f3f3',
+	fireMiddleClick: false,
+	fireRightClick: false,
+	stopContextMenu: false,
+};
+
+export const canvasActions: CanvasActions = {
+	axisLock: true,
+	dragDuplicate: true,
+	move: true,
+	all: true,
+	copy: true,
+	paste: true,
+	esc: true,
+	del: true,
+	clipboard: false,
+	transaction: true,
+	zoom: true,
+	cut: true,
+	grab: true,
+	scroll: true,
+};
+
+export const gridOption: GridOption = {
+	type: 'line',
+	enabled: false,
+	grid: 10,
+	snapToGrid: false,
+	lineColor: '#ebebeb',
+	borderColor: '#cccccc',
+};
+
+export const rulerOption: RulerOption = {
+	enabled: false,
+	unit: 'px',
+	size: 24,
+	backgroundColor: '#ffffff',
+	lineColor: '#d7e0e7',
+	textColor: '#64748b',
+};
+
+export const workareaOption: Partial<WorkareaObject> = {
+	width: 2038.08,
+	height: 727.68,
+	workareaWidth: 2038.08,
+	workareaHeight: 727.68,
+	unit: 'in',
+	sideWidth: 9,
+	sideHeight: 6,
+	bleed: 0.79,
+	spineWidth: 0.55,
+	spineBleed: 0.55,
+	printGuides: [],
+	lockScalingX: true,
+	lockScalingY: true,
+	scaleX: 1,
+	scaleY: 1,
+	backgroundColor: '#fff',
+	hasBorders: false,
+	hasControls: false,
+	selectable: false,
+	lockMovementX: true,
+	lockMovementY: true,
+	hoverCursor: 'default',
+	name: '',
+	id: 'workarea',
+	type: 'image',
+	layout: 'fixed', // fixed, responsive, fullscreen
+	link: {},
+	tooltip: {
+		enabled: false,
+	},
+	isElement: false,
+};
+
+export const objectOption: Partial<FabricObjectOption> = {
+	rotation: 0,
+	centeredRotation: true,
+	strokeUniform: true,
+};
+
+export const guidelineOption: GuidelineOption = {
+	enabled: true,
+	spacing: {
+		color: '#0f9f8f',
+		enabled: true,
+		labelBackgroundColor: '#0f172a',
+		labelTextColor: '#ffffff',
+		snap: true,
+		snapMargin: 4,
+		threshold: 80,
+	},
+};
+
+export const activeSelectionOption = {
+	hasControls: true,
+};
+
+export const propertiesToInclude = ['id', 'name', 'description', 'locked', 'editable'];

@@ -1,10 +1,14 @@
-export type OrderSavedEvent = {
+export type SseNotificationEvent = {
   id: string;
-  type: 'order.saved';
+  type: string;
   created_at: string;
+  msg: string;
+  data?: Record<string, unknown>;
+};
+
+export type OrderSavedEvent = SseNotificationEvent & {
+  type: 'order.saved';
   data: {
     order: Record<string, unknown>;
-    google_sheets: Record<string, unknown>;
-    source: string;
   };
 };

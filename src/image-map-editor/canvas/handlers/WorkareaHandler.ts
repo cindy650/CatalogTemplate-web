@@ -1,0 +1,578 @@
+import * as fabric from 'fabric';
+
+import { Handler } from '.';
+import { FabricImage, PrintGuide, PrintUnit, WorkareaLayout, WorkareaObject } from '../models';
+import { VideoObject } from '../objects/Video';
+
+class WorkareaHandler {
+	handler: Handler;
+	private printGuideContext: CanvasRenderingContext2D;
+
+	private readonly pixelsPerUnit: Record<PrintUnit, number> = {
+		in: 96,
+		cm: 96 / 2.54,
+		mm: 96 / 25.4,
+	};
+
+	constructor(handler: Handler) {
+		this.handler = handler;
+		this.printGuideContext = this.handler.canvas.getSelectionContext();
+		this.handler.canvas.on({
+			'before:render': this.beforePrintGuideRender,
+			'after:render': this.afterPrintGuideRender,
+		} as any);
+		this.initialize();
+	}
+
+	/**
+	 * Initialize workarea
+	 *
+	 * @author salgum1114
+	 */
+	public initialize() {
+		const { workareaOption } = this.handler;
+		const fabricOptions = { ...workareaOption };
+		delete (fabricOptions as Record<string, any>).type;
+		const image = new Image(workareaOption.width, workareaOption.height);
+		image.width = workareaOption.width;
+		image.height = workareaOption.height;
+		this.handler.workarea = new fabric.FabricImage(image, fabricOptions) as WorkareaObject;
+		this.handler.canvas.add(this.handler.workarea);
+		this.handler.workarea.set(
+			'printGuides',
+			this.buildPrintGuides(
+				(workareaOption as any).workareaWidth || workareaOption.width || 0,
+				(workareaOption as any).workareaHeight || workareaOption.height || 0,
+				workareaOption,
+			),
+		);
+		this.handler.objects = this.handler.getObjects();
+		this.handler.canvas.centerObject(this.handler.workarea);
+		this.handler.canvas.renderAll();
+	}
+
+	private toPositiveNumber = (value: unknown, fallback: number) => {
+		const parsed = Number(value);
+		return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+	};
+
+	private getPrintValues = (values: Partial<WorkareaObject | Record<string, any>> = {}) => ({
+		unit: (values.unit || this.handler.workarea?.unit || 'in') as PrintUnit,
+		sideWidth: this.toPositiveNumber(values.sideWidth ?? this.handler.workarea?.sideWidth, 9),
+		sideHeight: this.toPositiveNumber(values.sideHeight ?? this.handler.workarea?.sideHeight, 6),
+		bleed: this.toPositiveNumber(values.bleed ?? this.handler.workarea?.bleed, 0.79),
+		spineWidth: this.toPositiveNumber(values.spineWidth ?? this.handler.workarea?.spineWidth, 0.55),
+		spineBleed: this.toPositiveNumber(values.spineBleed ?? this.handler.workarea?.spineBleed, 0.55),
+	});
+
+	private buildPrintGuides = (
+		width: number,
+		height: number,
+		values: Partial<WorkareaObject | Record<string, any>> = {},
+	): PrintGuide[] => {
+		const printValues = this.getPrintValues(values);
+		const factor = this.pixelsPerUnit[printValues.unit] || this.pixelsPerUnit.mm;
+		const sideWidth = printValues.sideWidth * factor;
+		const bleed = printValues.bleed * factor;
+		const spineWidth = printValues.spineWidth * factor;
+		const spineBleed = printValues.spineBleed * factor;
+		const verticalPositions = [
+			0,
+			bleed,
+			bleed + sideWidth,
+			bleed + sideWidth + spineBleed,
+			bleed + sideWidth + spineBleed + spineWidth,
+			bleed + sideWidth + spineBleed + spineWidth + spineBleed,
+			width - bleed,
+			width,
+		];
+		const horizontalPositions = [0, bleed, height - bleed, height];
+		const guides: PrintGuide[] = [];
+		const add = (orientation: PrintGuide['orientation'], position: number) => {
+			if (position < 0 || position > (orientation === 'vertical' ? width : height)) return;
+			if (
+				!guides.some(guide => guide.orientation === orientation && Math.abs(guide.position - position) < 0.01)
+			) {
+				guides.push({ orientation, position });
+			}
+		};
+		verticalPositions.forEach(position => add('vertical', position));
+		horizontalPositions.forEach(position => add('horizontal', position));
+		return guides;
+	};
+
+	private beforePrintGuideRender = () => {
+		this.handler.canvas.clearContext(this.printGuideContext);
+	};
+
+	private afterPrintGuideRender = () => {
+		const workarea = this.handler.workarea;
+		if (!workarea || !workarea.printGuides?.length) return;
+		const origin = workarea.getPointByOrigin('left', 'top');
+		const { viewportTransform } = this.handler.canvas;
+		const zoom = this.handler.canvas.getZoom() || 1;
+		const width = workarea.width * workarea.scaleX;
+		const height = workarea.height * workarea.scaleY;
+		const ctx = this.printGuideContext;
+		ctx.save();
+		ctx.transform(...viewportTransform);
+		ctx.lineWidth = 1 / zoom;
+		ctx.strokeStyle = '#1677ff';
+		ctx.setLineDash([6 / zoom, 4 / zoom]);
+		ctx.beginPath();
+		workarea.printGuides.forEach(guide => {
+			if (guide.orientation === 'vertical') {
+				ctx.moveTo(origin.x + guide.position, origin.y);
+				ctx.lineTo(origin.x + guide.position, origin.y + height);
+			} else {
+				ctx.moveTo(origin.x, origin.y + guide.position);
+				ctx.lineTo(origin.x + width, origin.y + guide.position);
+			}
+		});
+		ctx.stroke();
+		this.drawPrintDimensionLabels(ctx, origin, height, workarea, zoom);
+		ctx.restore();
+	};
+
+	private formatPrintValue = (value: number) => value.toFixed(3);
+
+	private drawPrintDimensionLabels = (
+		ctx: CanvasRenderingContext2D,
+		origin: fabric.Point,
+		height: number,
+		workarea: WorkareaObject,
+		zoom: number,
+	) => {
+		const values = this.getPrintValues(workarea);
+		const factor = this.pixelsPerUnit[values.unit] || this.pixelsPerUnit.mm;
+		const bleed = values.bleed * factor;
+		const sideWidth = values.sideWidth * factor;
+		const spineBleed = values.spineBleed * factor;
+		const spineWidth = values.spineWidth * factor;
+		const sideStart = bleed;
+		const sideEnd = sideStart + sideWidth;
+		const spineStart = sideEnd + spineBleed;
+		const spineEnd = spineStart + spineWidth;
+		const labelUnit = values.unit;
+		const fontSize = 12 / zoom;
+		const rowGap = 18 / zoom;
+		const hasTopMargin = origin.y > 72 / zoom;
+		const labelDirection = hasTopMargin ? -1 : 1;
+		const labelBaseY = hasTopMargin ? origin.y - 12 / zoom : origin.y + height + 16 / zoom;
+		const labelColor = '#1677ff';
+		const text = (label: string, value: number) => `${label} ${this.formatPrintValue(value)} ${labelUnit}`;
+
+		ctx.save();
+		ctx.setLineDash([]);
+		ctx.font = `${fontSize}px sans-serif`;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.lineWidth = 3 / zoom;
+		ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+		ctx.fillStyle = labelColor;
+
+		const horizontalDimension = (label: string, value: number, start: number, end: number, row: number) => {
+			const y = labelBaseY + labelDirection * row * rowGap;
+			ctx.beginPath();
+			ctx.moveTo(origin.x + start, y);
+			ctx.lineTo(origin.x + end, y);
+			ctx.moveTo(origin.x + start, y - (labelDirection * 4) / zoom);
+			ctx.lineTo(origin.x + start, y + (labelDirection * 4) / zoom);
+			ctx.moveTo(origin.x + end, y - (labelDirection * 4) / zoom);
+			ctx.lineTo(origin.x + end, y + (labelDirection * 4) / zoom);
+			ctx.strokeStyle = labelColor;
+			ctx.lineWidth = 1 / zoom;
+			ctx.stroke();
+			const labelX = origin.x + (start + end) / 2;
+			const labelY = y + (labelDirection * 8) / zoom;
+			ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+			ctx.lineWidth = 3 / zoom;
+			ctx.strokeText(text(label, value), labelX, labelY);
+			ctx.fillStyle = labelColor;
+			ctx.fillText(text(label, value), labelX, labelY);
+		};
+
+		// The usable single-side span includes the adjacent spine bleed.
+		horizontalDimension('单面宽', values.sideWidth + values.spineBleed, sideStart, spineStart, 0);
+		horizontalDimension('出血', values.bleed, 0, bleed, 1);
+		horizontalDimension('背脊宽', values.spineWidth, spineStart, spineEnd, 0);
+		horizontalDimension('背脊出血', values.spineBleed, sideEnd, spineStart, 1);
+		horizontalDimension('背脊出血', values.spineBleed, spineEnd, spineEnd + spineBleed, 1);
+
+		const heightLabelX = origin.x - 20 / zoom;
+		const heightLabelY = origin.y + height / 2;
+		ctx.save();
+		ctx.translate(heightLabelX, heightLabelY);
+		ctx.rotate(-Math.PI / 2);
+		const heightLabel = text('单面高', values.sideHeight);
+		ctx.strokeText(heightLabel, 0, 0);
+		ctx.fillText(heightLabel, 0, 0);
+		ctx.restore();
+		ctx.restore();
+	};
+
+	public setPrintDimensions = (values: Record<string, any>) => {
+		const workarea = this.handler.workarea;
+		const printValues = this.getPrintValues(values);
+		const factor = this.pixelsPerUnit[printValues.unit] || this.pixelsPerUnit.mm;
+		const width = Math.max(
+			1,
+			(printValues.sideWidth * 2 + printValues.bleed * 2 + printValues.spineBleed * 2 + printValues.spineWidth) *
+				factor,
+		);
+		const height = Math.max(1, (printValues.sideHeight + printValues.bleed * 2) * factor);
+		const element = workarea.getElement();
+		workarea.set({
+			...printValues,
+			workareaWidth: width,
+			workareaHeight: height,
+			printGuides: this.buildPrintGuides(width, height, printValues),
+		});
+		if (workarea.isElement && element?.width && element?.height) {
+			workarea.set({
+				width: element.width,
+				height: element.height,
+				scaleX: width / element.width,
+				scaleY: height / element.height,
+			});
+		} else {
+			workarea.set({ width, height, scaleX: 1, scaleY: 1 });
+		}
+		workarea.setCoords();
+		this.handler.canvas.centerObject(workarea);
+		// Render synchronously so each unit value edit is reflected immediately.
+		this.handler.canvas.renderAll();
+	};
+
+	public refreshPrintGuides = () => {
+		const workarea = this.handler.workarea;
+		const width = workarea.workareaWidth || workarea.width * workarea.scaleX;
+		const height = workarea.workareaHeight || workarea.height * workarea.scaleY;
+		workarea.set('printGuides', this.buildPrintGuides(width, height, workarea));
+		this.handler.canvas.requestRenderAll();
+	};
+
+	public destroy = () => {
+		this.handler.canvas.off({
+			'before:render': this.beforePrintGuideRender,
+			'after:render': this.afterPrintGuideRender,
+		} as any);
+	};
+
+	/**
+	 * Set the layout on workarea
+	 * @param {WorkareaLayout} layout
+	 * @returns
+	 */
+	public setLayout = (layout: WorkareaLayout) => {
+		this.handler.workarea.set('layout', layout);
+		const { isElement, workareaWidth, workareaHeight } = this.handler.workarea;
+		const element = this.handler.workarea.getElement();
+		const { canvas } = this.handler;
+		let scaleX = 1;
+		let scaleY = 1;
+		const isFixed = layout === 'fixed';
+		const isResponsive = layout === 'responsive';
+		const isFullscreen = layout === 'fullscreen';
+		if (isElement) {
+			if (isFixed) {
+				scaleX = workareaWidth / element.width;
+				scaleY = workareaHeight / element.height;
+			} else if (isResponsive) {
+				const scales = this.calculateScale();
+				scaleX = scales.scaleX;
+				scaleY = scales.scaleY;
+			} else {
+				scaleX = canvas.getWidth() / element.width;
+				scaleY = canvas.getHeight() / element.height;
+			}
+		}
+		this.handler.getObjects().forEach(obj => {
+			const { id, player } = obj as unknown as VideoObject;
+			if (id !== 'workarea') {
+				const objScaleX = !isFullscreen ? 1 : scaleX;
+				const objScaleY = !isFullscreen ? 1 : scaleY;
+				const objWidth = obj.width * objScaleX * canvas.getZoom();
+				const objHeight = obj.height * objScaleY * canvas.getZoom();
+				const el = this.handler.elementHandler.findById(obj.id);
+				this.handler.elementHandler.setSize(el, obj);
+				if (player) {
+					player.setPlayerSize(objWidth, objHeight);
+				}
+				obj.set({
+					scaleX: !isFullscreen ? 1 : objScaleX,
+					scaleY: !isFullscreen ? 1 : objScaleY,
+				});
+			}
+		});
+		if (isResponsive) {
+			const center = canvas.getCenterPoint();
+			if (isElement) {
+				this.handler.workarea.set({
+					scaleX: 1,
+					scaleY: 1,
+				});
+				this.handler.zoomHandler.zoomToPoint(center, scaleX);
+			} else {
+				this.handler.workarea.set({
+					width: workareaWidth,
+					height: workareaHeight,
+				});
+				scaleX = canvas.getWidth() / workareaWidth;
+				scaleY = canvas.getHeight() / workareaHeight;
+				if (workareaHeight >= workareaWidth) {
+					scaleX = scaleY;
+				} else {
+					scaleY = scaleX;
+				}
+				this.handler.zoomHandler.zoomToPoint(center, scaleX);
+			}
+			canvas.centerObject(this.handler.workarea);
+			canvas.renderAll();
+			return;
+		}
+		if (isElement) {
+			this.handler.workarea.set({
+				width: element.width,
+				height: element.height,
+				scaleX,
+				scaleY,
+			});
+		} else {
+			const width = isFixed ? workareaWidth : this.handler.canvas.getWidth();
+			const height = isFixed ? workareaHeight : this.handler.canvas.getHeight();
+			this.handler.workarea.set({
+				width,
+				height,
+				backgroundColor: 'rgba(255, 255, 255, 1)',
+			});
+			this.handler.canvas.renderAll();
+			if (isFixed) {
+				canvas.centerObject(this.handler.workarea);
+			} else {
+				this.handler.workarea.set({
+					left: 0,
+					top: 0,
+				});
+			}
+		}
+		canvas.centerObject(this.handler.workarea);
+		const center = canvas.getCenterPoint();
+		canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+		this.handler.zoomHandler.zoomToPoint(center, 1);
+		canvas.renderAll();
+	};
+
+	/**
+	 * Set the responsive image on Workarea
+	 * @param {string | File} [source]
+	 * @param {boolean} [loaded]
+	 * @returns
+	 */
+	public setResponsiveImage = async (source: string | File, loaded?: boolean) => {
+		const imageFromUrl = async (src: string = '') => {
+			const img = await fabric.FabricImage.fromURL(src);
+			const { canvas, workarea, editable } = this.handler;
+			const { workareaWidth, workareaHeight } = workarea;
+			const { scaleX, scaleY } = this.calculateScale(img);
+			const element = img.getElement();
+			if (element) {
+				workarea.setElement(element);
+				workarea.set({ isElement: true, selectable: false });
+			} else {
+				const image = new Image(workareaWidth, workareaHeight);
+				workarea.setElement(image);
+				workarea.set({
+					isElement: false,
+					selectable: false,
+					width: workareaWidth,
+					height: workareaHeight,
+				});
+			}
+			if (editable && !loaded) {
+				canvas.getObjects().forEach(obj => {
+					const { id, player } = obj as VideoObject;
+					if (id !== 'workarea') {
+						const objWidth = obj.width * scaleX;
+						const objHeight = obj.height * scaleY;
+						const el = this.handler.elementHandler.findById(id);
+						this.handler.elementHandler.setScaleOrAngle(el, obj);
+						this.handler.elementHandler.setSize(el, obj);
+						if (player) {
+							player.setPlayerSize(objWidth, objHeight);
+						}
+						obj.set({ scaleX: 1, scaleY: 1 });
+						obj.setCoords();
+					}
+				});
+			}
+			this.handler.zoomHandler.zoomToFit();
+			canvas.centerObject(workarea);
+			return workarea;
+		};
+		const { workarea } = this.handler;
+		if (!source) {
+			workarea.set({
+				src: null,
+				file: null,
+			});
+			return imageFromUrl(source as string);
+		}
+		if (source instanceof File) {
+			return new Promise<WorkareaObject>(resolve => {
+				const reader = new FileReader();
+				reader.onload = () => {
+					workarea.set({
+						file: source,
+					});
+					imageFromUrl(reader.result as string).then(resolve);
+				};
+				reader.readAsDataURL(source);
+			});
+		} else {
+			workarea.set({
+				src: source,
+			});
+			return imageFromUrl(source);
+		}
+	};
+
+	/**
+	 * Set the image on Workarea
+	 * @param {string | File} source
+	 * @param {boolean} [loaded=false]
+	 * @returns
+	 */
+	setImage = async (source: string | File, loaded = false) => {
+		const { canvas, workarea, editable } = this.handler;
+		if (workarea.layout === 'responsive') {
+			return this.setResponsiveImage(source, loaded);
+		}
+		const imageFromUrl = async (src: string) => {
+			const img = await fabric.FabricImage.fromURL(src, { crossOrigin: 'anonymous' });
+			let width = canvas.getWidth();
+			let height = canvas.getHeight();
+			if (workarea.layout === 'fixed') {
+				width = workarea.width * workarea.scaleX;
+				height = workarea.height * workarea.scaleY;
+			}
+			let scaleX = 1;
+			let scaleY = 1;
+			const element = img.getElement();
+			if (element) {
+				scaleX = width / img.width;
+				scaleY = height / img.height;
+				workarea.setElement(element);
+				workarea.set({
+					originX: 'left',
+					originY: 'top',
+					scaleX,
+					scaleY,
+					isElement: true,
+					selectable: false,
+				});
+			} else {
+				workarea.setElement(new Image());
+				workarea.set({
+					width,
+					height,
+					scaleX,
+					scaleY,
+					isElement: false,
+					selectable: false,
+				});
+			}
+			canvas.centerObject(workarea);
+			if (editable && !loaded) {
+				const { layout } = workarea;
+				canvas.getObjects().forEach(obj => {
+					const { id, player } = obj as VideoObject;
+					if (id !== 'workarea') {
+						scaleX = layout === 'fullscreen' ? scaleX : obj.scaleX;
+						scaleY = layout === 'fullscreen' ? scaleY : obj.scaleY;
+						const el = this.handler.elementHandler.findById(id);
+						this.handler.elementHandler.setSize(el, obj);
+						if (player) {
+							const objWidth = obj.width * scaleX;
+							const objHeight = obj.height * scaleY;
+							player.setPlayerSize(objWidth, objHeight);
+						}
+						obj.set({ scaleX, scaleY });
+						obj.setCoords();
+					}
+				});
+			}
+			const center = canvas.getCenterPoint();
+			const zoom = loaded || workarea.layout === 'fullscreen' ? 1 : this.handler.canvas.getZoom();
+			canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+			this.handler.zoomHandler.zoomToPoint(center, zoom);
+			canvas.renderAll();
+			return workarea;
+		};
+		if (!source) {
+			const image = new Image(workarea.width, workarea.height);
+			image.width = workarea.width;
+			image.height = workarea.height;
+			workarea.setElement(image);
+			workarea.set({
+				src: null,
+				file: null,
+				isElement: false,
+			});
+			canvas.centerObject(workarea);
+			const center = canvas.getCenterPoint();
+			const zoom = loaded ? 1 : canvas.getZoom();
+			canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+			this.handler.zoomHandler.zoomToPoint(center, zoom);
+			canvas.renderAll();
+			return workarea;
+		}
+		if (source instanceof File) {
+			return new Promise<WorkareaObject>(resolve => {
+				const reader = new FileReader();
+				reader.onload = () => {
+					workarea.set({
+						file: source,
+					});
+					imageFromUrl(reader.result as string).then(resolve);
+				};
+				reader.readAsDataURL(source);
+			});
+		} else {
+			workarea.set({
+				src: source,
+			});
+			return imageFromUrl(source);
+		}
+	};
+
+	/**
+	 * Calculate scale to the image
+	 *
+	 * @param {FabricImage} [image]
+	 * @returns
+	 */
+	public calculateScale = (image?: FabricImage | fabric.FabricImage) => {
+		const { canvas, workarea } = this.handler;
+		const { workareaWidth, workareaHeight } = workarea;
+		const element = (image || workarea).getElement();
+		const width = element?.width || workareaWidth;
+		const height = element?.height || workareaHeight;
+		let scaleX = canvas.getWidth() / width;
+		let scaleY = canvas.getHeight() / height;
+		if (height >= width) {
+			scaleX = scaleY;
+			if (canvas.getWidth() < width * scaleX) {
+				scaleX = scaleX * (canvas.getWidth() / (width * scaleX));
+			}
+		} else {
+			scaleY = scaleX;
+			if (canvas.getHeight() < height * scaleX) {
+				scaleX = scaleX * (canvas.getHeight() / (height * scaleX));
+			}
+		}
+		return { scaleX, scaleY };
+	};
+}
+
+export default WorkareaHandler;

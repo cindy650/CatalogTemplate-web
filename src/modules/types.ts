@@ -3,11 +3,17 @@ import type {
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
+  OrderListFilters,
+  OrderStatusDefinition,
+  ProductCategory,
   Shop,
+  CatalogSizeTemplate,
+  SizeTemplate,
   TemplateSummary
 } from '@shared/domain';
+import type { TemplateLibraryShopSelection } from './moduleRegistry';
 
-export type ModuleId = 'orders' | 'shops' | 'editor' | 'templates' | 'exports' | 'account';
+export type ModuleId = 'orders' | 'shops' | 'inner-pages' | 'size-templates' | 'template-library' | 'fonts' | 'editor' | 'image-map-test' | 'exports' | 'account';
 
 export type ModulePageProps = {
   setStatus(message: string): void;
@@ -38,10 +44,16 @@ export type AccountPageProps = ModulePageProps & {
 
 export type OrdersPageProps = {
   orders: Order[];
+  orderTotal: number;
+  orderLimit: number;
+  orderPage: number;
+  orderStatuses: OrderStatusDefinition[];
+  shops: Shop[];
+  filters: OrderListFilters;
   selectedOrderId: string;
   loading: boolean;
   loadError: string;
-  reloadOrders(): Promise<void>;
+  reloadOrders(filters?: OrderListFilters): Promise<void>;
   setSelectedOrderId(orderId: string): void;
   openOrderInEditor(order: Order): void;
 };
@@ -51,4 +63,35 @@ export type ShopsPageProps = {
   loading: boolean;
   loadError: string;
   reloadShops(): Promise<void>;
+  openShopOrders(shop: Shop): void;
+  openShopSizeTemplates(shop: Shop): void;
+};
+
+export type SizeTemplatesPageProps = {
+  shops: Shop[];
+  selectedShopId?: number;
+  selectedProductId?: number;
+  initialTemplateId?: number;
+  embedded?: boolean;
+  onEditorExit?(): void;
+  onTemplatesChange?(templates: SizeTemplate[]): void;
+};
+
+export type TemplateLibraryPageProps = {
+  products: ProductCategory[];
+  shops: Shop[];
+  selectedProductId?: number;
+  selectedShopId: TemplateLibraryShopSelection;
+  onOpenTemplate(template: CatalogSizeTemplate): void;
+  onCreateProduct(): void;
+  onEditProduct(product: ProductCategory): void;
+  onDeleteProduct(product: ProductCategory): void;
+  onEditorModeChange?(editing: boolean): void;
+};
+
+export type InnerPagesPageProps = {
+  shops: Shop[];
+  products: ProductCategory[];
+  selectedShopId?: number;
+  selectedProductId?: number;
 };

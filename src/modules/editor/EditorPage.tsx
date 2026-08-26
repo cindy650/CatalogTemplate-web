@@ -111,7 +111,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 function orderLabel(order: Order): string {
-  const detail = [order.customerName, order.status].filter(Boolean).join(' / ');
+  const detail = [order.customerName, order.statusText].filter(Boolean).join(' / ');
   return detail ? `${order.orderNo} - ${detail}` : order.orderNo;
 }
 

@@ -1,0 +1,167 @@
+import * as fabric from 'fabric';
+
+import { FabricObject } from '../models';
+import { VideoObject } from '../objects/Video';
+import AbstractHandler from './AbstractHandler';
+import type Handler from './Handler';
+
+class ZoomHandler extends AbstractHandler {
+	private _zoomStep?: number;
+
+	constructor(handler: Handler, zoomStep: number = 0.05) {
+		super(handler);
+		this._zoomStep = zoomStep;
+	}
+
+	/**
+	 * Zoom to point
+	 *
+	 * @param {fabric.Point} point
+	 * @param {number} zoom ex) 0 ~ 1. Not percentage value.
+	 */
+	public zoomToPoint = (point: fabric.Point, zoom: number) => {
+		const { minZoom, maxZoom } = this.handler;
+		let zoomRatio = zoom;
+		if (zoom <= minZoom / 100) {
+			zoomRatio = minZoom / 100;
+		} else if (zoom >= maxZoom / 100) {
+			zoomRatio = maxZoom / 100;
+		}
+		this.handler.canvas.zoomToPoint(point, zoomRatio);
+		this.handler.getObjects().forEach(obj => {
+			if (obj.superType === 'element') {
+				const { id, width, height, player } = obj as unknown as VideoObject;
+				const el = this.handler.elementHandler.findById(id);
+				// update the element
+				this.handler.elementHandler.setScaleOrAngle(el, obj);
+				this.handler.elementHandler.setSize(el, obj);
+				this.handler.elementHandler.setPosition(el, obj);
+				if (player) {
+					player.setPlayerSize(width, height);
+				}
+			}
+		});
+		if (this.handler.onZoom) {
+			this.handler.onZoom(zoomRatio);
+		}
+		this.handler.canvas.requestRenderAll();
+	};
+
+	/**
+	 * Zoom one to one
+	 *
+	 */
+	public zoomOneToOne = () => {
+		const center = this.handler.canvas.getCenterPoint();
+		this.handler.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+		this.zoomToPoint(center, 1);
+	};
+
+	/**
+	 * Zoom to fit
+	 *
+	 */
+	public zoomToFit = () => {
+		const workareaWidth = this.handler.workarea.getScaledWidth();
+		const workareaHeight = this.handler.workarea.getScaledHeight();
+		let scaleX = this.handler.canvas.getWidth() / workareaWidth;
+		const scaleY = this.handler.canvas.getHeight() / workareaHeight;
+		if (workareaHeight >= workareaWidth) {
+			scaleX = scaleY;
+			if (this.handler.canvas.getWidth() < workareaWidth * scaleX) {
+				scaleX = scaleX * (this.handler.canvas.getWidth() / (workareaWidth * scaleX));
+			}
+		} else {
+			if (this.handler.canvas.getHeight() < workareaHeight * scaleX) {
+				scaleX = scaleX * (this.handler.canvas.getHeight() / (workareaHeight * scaleX));
+			}
+		}
+		const center = this.handler.canvas.getCenterPoint();
+		this.handler.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+		this.zoomToPoint(center, scaleX);
+	};
+
+	/**
+	 * Zoom in
+	 *
+	 */
+	public zoomIn = () => {
+		let zoomRatio = this.handler.canvas.getZoom();
+		zoomRatio += this._zoomStep;
+		const center = this.handler.canvas.getCenterPoint();
+		this.zoomToPoint(center, zoomRatio);
+	};
+
+	/**
+	 * Zoom out
+	 *
+	 */
+	public zoomOut = () => {
+		let zoomRatio = this.handler.canvas.getZoom();
+		zoomRatio -= this._zoomStep;
+		const center = this.handler.canvas.getCenterPoint();
+		this.zoomToPoint(center, zoomRatio);
+	};
+
+	/**
+	 * Zoom to center with object
+	 *
+	 * @param {FabricObject} target If zoomFit true, rescaled canvas zoom.
+	 */
+	public zoomToCenterWithObject = (target: FabricObject, zoomFit?: boolean) => {
+		const canvasCenter = this.handler.canvas.getCenterPoint();
+		const targetCenter = target.getCenterPoint();
+		const { width, height } = target;
+		const diffTop = canvasCenter.y - targetCenter.y;
+		const diffLeft = canvasCenter.x - targetCenter.x;
+		if (zoomFit) {
+			let scaleX;
+			let scaleY;
+			scaleX = this.handler.canvas.getWidth() / width;
+			scaleY = this.handler.canvas.getHeight() / height;
+			if (height > width) {
+				scaleX = scaleY;
+				if (this.handler.canvas.getWidth() < width * scaleX) {
+					scaleX = scaleX * (this.handler.canvas.getWidth() / (width * scaleX));
+				}
+			} else {
+				scaleY = scaleX;
+				if (this.handler.canvas.getHeight() < height * scaleX) {
+					scaleX = scaleX * (this.handler.canvas.getHeight() / (height * scaleX));
+				}
+			}
+			this.handler.canvas.setViewportTransform([1, 0, 0, 1, diffLeft, diffTop]);
+			this.zoomToPoint(canvasCenter, scaleX);
+		} else {
+			const zoom = this.handler.canvas.getZoom();
+			this.handler.canvas.setViewportTransform([1, 0, 0, 1, diffLeft, diffTop]);
+			this.zoomToPoint(canvasCenter, zoom);
+		}
+	};
+
+	/**
+	 * Zoom to center with objects
+	 *
+	 * @param {boolean} [zoomFit] If zoomFit true, rescaled canvas zoom.
+	 * @returns
+	 */
+	public zoomToCenter = (zoomFit?: boolean) => {
+		const activeObject = this.handler.canvas.getActiveObject();
+		if (!activeObject) {
+			return;
+		}
+		this.zoomToCenterWithObject(activeObject, zoomFit);
+	};
+
+	public zoomToFitWithObject = () => {
+		this.canvas.discardActiveObject();
+		const activeSelection = new fabric.ActiveSelection(this.handler.getObjects());
+		if (activeSelection.getObjects().length) {
+			this.canvas.setActiveObject(activeSelection);
+			this.handler.zoomHandler.zoomToCenter(true);
+			this.canvas.discardActiveObject();
+		}
+	};
+}
+
+export default ZoomHandler;
