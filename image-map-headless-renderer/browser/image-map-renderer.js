@@ -65,6 +65,12 @@
     if (formats.includes('png')) {
       images.png = outputCanvas.toDataURL('image/png');
     }
+    if (formats.includes('svg')) {
+      images.svg = buildSvg(canvas, workarea, bounds, rawObjects);
+    }
+    if (formats.includes('text-to-svg')) {
+      images.textToSvg = await buildTextToSvg(canvas, workarea, bounds, rawObjects);
+    }
     const geometry = canvas.getObjects().map(object => ({
       id: object.id ?? null,
       type: object.type,
@@ -126,6 +132,70 @@
       local.crossOrigin = 'anonymous';
     }
     return local;
+  }
+
+  function collectFontSources(objects, options = {}) {
+    const fonts = new Map();
+    visit(objects, object => {
+      const family = String(object.fontFamily || '').trim();
+      const url = String(object.fontUrl || object.font_url || '').trim();
+      const loadUrl = String(object.fontDataUrl || '').trim() || url;
+      if (!family || !url) return;
+      const weight = object.fontWeight || 'normal';
+      const style = object.fontStyle || 'normal';
+      const key = `${family}\u0000${url}\u0000${weight}\u0000${style}`;
+      fonts.set(key, { family, url, loadUrl, weight, style });
+    });
+    return [...fonts.values()].map(font => options.textToSvg
+      ? { family: font.family, url: font.url, loadUrl: font.loadUrl }
+      : font);
+  }
+
+  function layerNames(objects) {
+    return new Map(objects.map(object => [
+      String(object?.id || ''),
+      String(object?.name || (String(object?.id || '').toLowerCase() === 'workarea' ? '画布' : object?.id) || object?.type || '图层'),
+    ]));
+  }
+
+  function renderedPrintGuides(workarea, bounds) {
+    const guides = Array.isArray(workarea.printGuides) ? workarea.printGuides : [];
+    const logicalWidth = numberOr(workarea.workareaWidth, bounds.width) || bounds.width;
+    const logicalHeight = numberOr(workarea.workareaHeight, bounds.height) || bounds.height;
+    const scaleX = bounds.width / logicalWidth;
+    const scaleY = bounds.height / logicalHeight;
+    return guides.map(guide => ({
+      ...guide,
+      position: (Number(guide.position) || 0) * (guide.orientation === 'vertical' ? scaleX : scaleY),
+    }));
+  }
+
+  function exportOptions(canvas, workarea, bounds, objects, textToSvg = false) {
+    const rawSvg = canvas.toSVG({
+      width: bounds.width,
+      height: bounds.height,
+      viewBox: { x: 0, y: 0, width: bounds.width, height: bounds.height },
+    });
+    return {
+      rawSvg,
+      bounds: { left: 0, top: 0, width: bounds.width, height: bounds.height },
+      backgroundColor: String(workarea.backgroundColor || '#ffffff'),
+      layerNames: layerNames(objects),
+      fontSources: collectFontSources(objects, { textToSvg }),
+      printGuides: renderedPrintGuides(workarea, bounds),
+    };
+  }
+
+  function buildSvg(canvas, workarea, bounds, objects) {
+    const exporter = global.ImageMapEditorSvgExport;
+    if (!exporter?.exportCorelCompatibleSvg) throw new Error('编辑器 SVG 导出模块未加载');
+    return exporter.exportCorelCompatibleSvg(exportOptions(canvas, workarea, bounds, objects));
+  }
+
+  async function buildTextToSvg(canvas, workarea, bounds, objects) {
+    const exporter = global.ImageMapEditorSvgExport;
+    if (!exporter?.exportTextToSvg) throw new Error('编辑器 text-to-svg 导出模块未加载');
+    return exporter.exportTextToSvg(exportOptions(canvas, workarea, bounds, objects, true));
   }
 
   async function createObject(serialized, warnings) {
@@ -245,7 +315,7 @@
     const fonts = new Map();
     visit(objects, object => {
       const family = String(object.fontFamily || '').trim();
-      const url = String(object.fontUrl || object.font_url || '').trim();
+      const url = String(object.fontDataUrl || object.fontUrl || object.font_url || '').trim();
       if (!family || !url) return;
       const weight = String(object.fontWeight || 'normal');
       const style = String(object.fontStyle || 'normal');
@@ -304,7 +374,7 @@
   function normalizeFormats(value) {
     const formats = Array.isArray(value) && value.length ? value : ['jpg', 'png'];
     const normalized = [...new Set(formats.map(item => String(item).toLowerCase() === 'jpeg' ? 'jpg' : String(item).toLowerCase()))];
-    if (normalized.some(item => item !== 'jpg' && item !== 'png')) throw new Error('仅支持 jpg 和 png');
+    if (normalized.some(item => !['jpg', 'png', 'svg', 'text-to-svg'].includes(item))) throw new Error('仅支持 jpg、png、svg 和 text-to-svg');
     return normalized;
   }
 

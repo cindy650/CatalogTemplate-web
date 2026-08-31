@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
-import { App, Breadcrumb, Button, Form, Input, Layout, Menu, Modal, Select, Tag, Typography } from 'antd';
-import { MenuFoldOutlined, MenuUnfoldOutlined, MinusOutlined, PlusOutlined } from '@ant-design/icons';
-import type { ProductCategory, ProductCategoryPayload, Shop } from '@shared/domain';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { App, Breadcrumb, Button, Form, Input, InputNumber, Layout, Menu, Modal, Select, Tag, Typography } from 'antd';
+import { DeleteOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MinusOutlined, PlusOutlined } from '@ant-design/icons';
+import type { ProductCategory, ProductCategoryPayload, ProductCommonSpecValue, Shop } from '@shared/domain';
 import type { ModuleId } from '../modules/types';
 import {
   getModuleDefinition,
@@ -22,6 +22,66 @@ import type { ProductMenuActions } from '../modules/moduleRegistry';
 import type { TemplateLibraryShopSelection } from '../modules/moduleRegistry';
 
 const { Header, Sider, Content } = Layout;
+
+const defaultCommonSpecValue: ProductCommonSpecValue = {
+  id: '',
+  label: '',
+  unit: 'in',
+  pageCount: 50,
+  pageCountOptions: [50],
+  sideWidth: 9,
+  sideHeight: 6,
+  bleed: 0.79,
+  spineWidthMode: 'fixed',
+  spineWidth: 0.55,
+  minSpineWidth: 0.55,
+  maxSpineWidth: 0.7,
+  spineBleed: 0.55,
+  paperThickness: 0
+};
+
+const unitToInches: Record<ProductCommonSpecValue['unit'], number> = {
+  in: 1,
+  cm: 1 / 2.54,
+  mm: 1 / 25.4
+};
+
+const commonSpecDimensionFields = [
+  'sideWidth',
+  'sideHeight',
+  'bleed',
+  'spineWidth',
+  'minSpineWidth',
+  'maxSpineWidth',
+  'spineBleed'
+] as const;
+
+function convertCommonSpecUnit(
+  values: Partial<ProductCommonSpecValue>,
+  from: ProductCommonSpecValue['unit'],
+  to: ProductCommonSpecValue['unit']
+): Partial<ProductCommonSpecValue> {
+  if (from === to) return { ...values, unit: to };
+  const factor = unitToInches[from] / unitToInches[to];
+  const converted = { ...values, unit: to };
+  commonSpecDimensionFields.forEach((field) => {
+    const value = values[field];
+    if (value === undefined || value === null) return;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    converted[field] = Number((numeric * factor).toFixed(4));
+  });
+  return converted;
+}
+
+function hasCommonSpecValue(values: Partial<ProductCommonSpecValue> | undefined): boolean {
+  if (!values) return false;
+  return Object.entries(values).some(([field, value]) => {
+    if (field === 'label' || field === 'id' || field === 'unit' || field === 'spineWidthMode') return false;
+    if (Array.isArray(value)) return value.length > 0;
+    return value !== undefined && value !== null && value !== '';
+  });
+}
 
 type AppLayoutProps = {
   activeModule: ModuleId;
@@ -77,6 +137,7 @@ export default function AppLayout({
   const [productNames, setProductNames] = useState<string[]>([]);
   const [productDraft, setProductDraft] = useState('');
   const [productInputVisible, setProductInputVisible] = useState(false);
+  const commonSpecUnitsRef = useRef<Record<string, ProductCommonSpecValue['unit']>>({});
   const activeModuleDefinition = getModuleDefinition(activeModule);
   const productActions: ProductMenuActions = useMemo(() => ({ onAdd: () => onOpenProductEditor(null), onEdit: onOpenProductEditor, onDelete: (product) => { void onDeleteProduct(product); } }), [onDeleteProduct, onOpenProductEditor]);
   const menuItems = useMemo(() => getModuleMenuItems(shops, products, productActions), [shops, products, productActions]);
@@ -122,10 +183,27 @@ export default function AppLayout({
   useEffect(() => {
     if (productEditor === undefined) return;
     productForm.resetFields();
+    commonSpecUnitsRef.current = {};
     setProductNames(productEditor?.productNames ?? []);
     setProductDraft('');
     setProductInputVisible(false);
-    if (productEditor) productForm.setFieldsValue({ name: productEditor.name, description: productEditor.description, shopIds: productEditor.shopIds });
+    commonSpecUnitsRef.current = Object.fromEntries(
+      (productEditor?.commonSpecValues ?? []).map((value, index) => [
+        String(index),
+        value.unit === 'mm' || value.unit === 'cm' ? value.unit : 'in'
+      ])
+    );
+    if (productEditor) productForm.setFieldsValue({
+      name: productEditor.name,
+      description: productEditor.description,
+      specifications: productEditor.specifications,
+      specificationField: productEditor.specificationField,
+      commonSpecValues: (productEditor.commonSpecValues ?? []).map((value) => ({
+        ...value,
+        label: value.label || value.id
+      })),
+      shopIds: productEditor.shopIds
+    });
   }, [productEditor, productForm]);
 
   function addProductName() {
@@ -220,6 +298,7 @@ export default function AppLayout({
       </Layout>
       <Modal
         title={productEditor ? '编辑产品分类' : '添加产品分类'}
+        width={720}
         open={productEditor !== undefined}
         okText="保存"
         cancelText="取消"
@@ -237,6 +316,28 @@ export default function AppLayout({
               name: String(values.name ?? '').trim(),
               description: String(values.description ?? ''),
               productNames,
+              specifications: Array.isArray(values.specifications)
+                ? values.specifications.map(String).map((item) => item.trim()).filter(Boolean)
+                : [],
+              specificationField: String(values.specificationField ?? '').trim(),
+              commonSpecValues: Array.isArray(values.commonSpecValues)
+                ? values.commonSpecValues.map((value: Partial<ProductCommonSpecValue>) => ({
+                  label: String(value.label ?? '').trim(),
+                  id: String(value.label ?? '').trim(),
+                  unit: value.unit === 'mm' || value.unit === 'cm' ? value.unit : 'in',
+                  pageCount: Number(value.pageCount) || 0,
+                  pageCountOptions: Array.isArray(value.pageCountOptions) ? value.pageCountOptions.map(Number).filter((count) => Number.isFinite(count) && count > 0) : [],
+                  sideWidth: Number(value.sideWidth) || 0,
+                  sideHeight: Number(value.sideHeight) || 0,
+                  bleed: Number(value.bleed) || 0,
+                  spineWidthMode: value.spineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed',
+                  spineWidth: Number(value.spineWidth) || 0,
+                  minSpineWidth: Number(value.minSpineWidth) || 0,
+                  maxSpineWidth: Number(value.maxSpineWidth) || 0,
+                  spineBleed: Number(value.spineBleed) || 0,
+                  paperThickness: Number(value.paperThickness) || 0
+                })).filter((value) => value.id || value.label)
+                : [],
               shopIds: Array.isArray(values.shopIds) ? values.shopIds.map(Number).filter(Number.isInteger) : [],
               enabled: true
             });
@@ -263,6 +364,66 @@ export default function AppLayout({
                 )}
               </div>
             </div>
+          </Form.Item>
+          <Form.Item name="specifications" label="商品规格">
+            <Select mode="tags" tokenSeparators={[',', '，']} placeholder="输入规格后按回车，例如 9×6" />
+          </Form.Item>
+          <Form.Item label="常用规格值" extra="显示名称同时作为规格 ID，保存后请勿随意修改。">
+            <Form.List name="commonSpecValues">
+              {(fields, { add, remove }) => (
+                <div className="product-common-spec-editor">
+                  {fields.map((field, index) => {
+                    const rowKey = String(field.key);
+                    if (!commonSpecUnitsRef.current[rowKey]) {
+                      const rowValue = productForm.getFieldValue(['commonSpecValues', field.name]) as Partial<ProductCommonSpecValue> | undefined;
+                      commonSpecUnitsRef.current[rowKey] = rowValue?.unit === 'mm' || rowValue?.unit === 'cm' ? rowValue.unit : 'in';
+                    }
+                    return (
+                      <div className="product-common-spec-row" key={field.key}>
+                        <div className="product-common-spec-row-head">
+                          <Typography.Text strong>规格 {index + 1}</Typography.Text>
+                          <Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除规格 ${index + 1}`} onClick={() => remove(field.name)} />
+                        </div>
+                        <div className="product-common-spec-grid">
+                          <Form.Item
+                            name={[field.name, 'label']}
+                            label="显示名称"
+                            rules={[{
+                              validator: async (_, value) => {
+                                const row = productForm.getFieldValue(['commonSpecValues', field.name]) as Partial<ProductCommonSpecValue> | undefined;
+                                if (hasCommonSpecValue(row) && !String(value ?? '').trim()) throw new Error('填写规格参数后请输入显示名称');
+                              }
+                            }]}
+                          ><Input placeholder="9*6" /></Form.Item>
+                          <Form.Item name={[field.name, 'unit']} label="单位"><Select options={[{ value: 'in', label: 'in' }, { value: 'cm', label: 'cm' }, { value: 'mm', label: 'mm' }]} onChange={(nextUnit: ProductCommonSpecValue['unit']) => {
+                            const current = productForm.getFieldValue(['commonSpecValues', field.name]) as Partial<ProductCommonSpecValue> | undefined;
+                            const previousUnit = commonSpecUnitsRef.current[rowKey]
+                              ?? (current?.unit === 'mm' || current?.unit === 'cm' ? current.unit : 'in');
+                            commonSpecUnitsRef.current[rowKey] = nextUnit;
+                            productForm.setFieldValue(['commonSpecValues', field.name], convertCommonSpecUnit(current ?? {}, previousUnit, nextUnit));
+                          }} /></Form.Item>
+                          <Form.Item name={[field.name, 'pageCount']} label="页数"><InputNumber min={0} precision={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'pageCountOptions']} label="页数选项"><Select mode="tags" tokenSeparators={[',', '，']} /></Form.Item>
+                          <Form.Item name={[field.name, 'sideWidth']} label="单面宽"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'sideHeight']} label="单面高"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'bleed']} label="出血"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'spineWidthMode']} label="背脊规则"><Select options={[{ value: 'fixed', label: '固定' }, { value: 'by_page_count', label: '按页数' }]} /></Form.Item>
+                          <Form.Item name={[field.name, 'spineWidth']} label="背脊宽"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'minSpineWidth']} label="最小背脊宽"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'maxSpineWidth']} label="最大背脊宽"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'spineBleed']} label="背脊出血"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'paperThickness']} label="纸张厚度(mm)"><InputNumber min={0} /></Form.Item>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ ...defaultCommonSpecValue })}>添加常用规格</Button>
+                </div>
+              )}
+            </Form.List>
+          </Form.Item>
+          <Form.Item name="specificationField" label="规格匹配字段">
+            <Input placeholder="商品规格字段" />
           </Form.Item>
           <Form.Item name="shopIds" label="关联店铺"><Select mode="multiple" options={shops.map((shop) => ({ value: shop.id, label: shop.shopName || shop.shop || '未命名店铺' }))} placeholder="选择关联店铺" /></Form.Item>
         </Form>

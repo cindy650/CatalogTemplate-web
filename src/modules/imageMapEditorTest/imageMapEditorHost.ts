@@ -64,12 +64,12 @@ export const applyTextFont = async (familyValue: string, filePathValue: string):
   const filePath = filePathValue.trim();
   if (!family || !filePath || typeof FontFace === 'undefined' || typeof document === 'undefined') return;
 
-  const current = registeredFontFaces.get(family);
-  if (current?.filePath === filePath) {
+  const key = `${family}\u0000${filePath}`;
+  const current = registeredFontFaces.get(key);
+  if (current) {
     await current.loading;
     return;
   }
-  if (current) document.fonts.delete(current.face);
 
   const face = new FontFace(family, `url(${JSON.stringify(filePath)})`);
   const registered: RegisteredFontFace = {
@@ -79,11 +79,11 @@ export const applyTextFont = async (familyValue: string, filePathValue: string):
       document.fonts.add(loadedFace);
     })
   };
-  registeredFontFaces.set(family, registered);
+  registeredFontFaces.set(key, registered);
   try {
     await registered.loading;
   } catch (error) {
-    if (registeredFontFaces.get(family) === registered) registeredFontFaces.delete(family);
+    if (registeredFontFaces.get(key) === registered) registeredFontFaces.delete(key);
     throw error;
   }
 };
@@ -93,9 +93,19 @@ export const loadTextFonts = async (search: string) => {
     .filter((font) => font.enabled && Boolean((font.family || font.name).trim()));
   return fonts.map((font) => ({
     id: String(font.id),
-    family: (font.family || font.preferredName || font.englishName || font.name).trim(),
-    label: (font.name || font.preferredName || font.englishName || font.allName || font.family).trim(),
+    // font_name is the stable per-font identifier. Other name fields may be
+    // shared by multiple records and are retained only as search aliases.
+    family: (font.name || font.family || font.preferredName || font.englishName).trim(),
+    label: (font.name || font.family || font.preferredName || font.englishName).trim(),
     filePath: font.filePath.trim(),
+    aliases: [
+      font.name,
+      font.family,
+      font.allName,
+      font.englishName,
+      font.preferredName,
+      font.postscriptName,
+    ].map((value) => value.trim()).filter(Boolean),
   }));
 };
 

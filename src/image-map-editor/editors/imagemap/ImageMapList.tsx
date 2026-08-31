@@ -86,7 +86,7 @@ export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListPr
 									style={{ width: 32 }}
 								/>
 								<div className="rde-canvas-list-item-text">{title}</div>
-								<Flex className="rde-canvas-list-item-actions" flex="1" justifyContent="flex-end">
+								<Flex className="rde-canvas-list-item-actions" flex="0 0 auto" justifyContent="flex-end">
 									<Button
 										className="rde-action-btn is-secondary"
 										shape="circle"

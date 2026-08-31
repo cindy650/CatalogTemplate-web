@@ -47,7 +47,7 @@ const EmbeddedImageMapEditor = ({ initialTheme, ...editorProps }: ImageMapEditor
 export { EmbeddedImageMapEditor as ImageMapEditor };
 export type { ImageMapBasicInfoValue, ImageMapShopOption, ImageMapSizeSchemeValue };
 export type { ImageMapEditorDocumentValue };
-export type ImageMapFontAsset = { family: string; filePath: string };
+export type ImageMapFontAsset = { family: string; filePath: string; aliases?: string[] };
 export type {
 	ImageMapFontLayoutCreator,
 	ImageMapFontLayoutCategoryLoader,

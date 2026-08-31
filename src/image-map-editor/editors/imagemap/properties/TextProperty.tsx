@@ -18,11 +18,11 @@ type TextData = {
 };
 
 type TextPropertyContext = {
-	fontOptions?: Array<{ key: string; value: string; label: string; family: string; filePath: string }>;
+	fontOptions?: Array<{ key: string; value: string; label: string; family: string; filePath: string; aliases?: string[] }>;
 	fontFamiliesError?: string;
 	fontFamiliesLoading?: boolean;
 	onFontSearch?: (search: string) => void;
-	onFontSelect?: (font: { family: string; filePath: string }) => void;
+	onFontSelect?: (font: { family: string; filePath: string; aliases?: string[] }) => void | Promise<void | boolean>;
 };
 
 type FontFamilySearchProps = TextPropertyContext & {
@@ -90,10 +90,11 @@ const FontFamilySearch = ({
 								<Button
 									block
 									className={selected ? 'is-selected' : undefined}
-									onClick={() => {
+									onClick={async () => {
+										const applied = await onFontSelect?.(font);
+										if (applied === false) return;
 										setSelectedFilePath(font.filePath);
 										skipNextEchoRef.current = true;
-										onFontSelect?.(font);
 										skipNextSearchRef.current = true;
 										setSearch(font.label);
 										}}

@@ -43,6 +43,9 @@ import TooltipHandler from './TooltipHandler';
 import TransactionHandler, { TransactionEvent } from './TransactionHandler';
 import WorkareaHandler from './WorkareaHandler';
 import ZoomHandler from './ZoomHandler';
+import { exportCorelCompatibleSvg } from '../utils/exportCorelCompatibleSvg';
+import { exportTextToSvg } from '../utils/exportTextToSvg';
+import { getImageSource } from '../utils/imageSource';
 import { resolveFabricObjectType } from './resolveFabricObjectType';
 
 installTextWordSpacingSupport();
@@ -111,6 +114,7 @@ export interface HandlerCallback {
 	 *
 	 */
 	onLoad?: (handler: Handler, canvas?: fabric.Canvas) => void;
+	onExportError?: (format: 'svg', error: Error) => void;
 }
 
 export interface HandlerOption {
@@ -268,6 +272,7 @@ class Handler implements HandlerOptions {
 	public onTransaction?: (transaction: TransactionEvent) => void;
 	public onInteraction?: (interactionMode: InteractionMode) => void;
 	public onLoad?: (handler: Handler, canvas?: fabric.Canvas) => void;
+	public onExportError?: (format: 'svg', error: Error) => void;
 
 	public imageHandler: ImageHandler;
 	public chartHandler: ChartHandler;
@@ -377,6 +382,7 @@ class Handler implements HandlerOptions {
 		this.onTransaction = options.onTransaction;
 		this.onInteraction = options.onInteraction;
 		this.onLoad = options.onLoad;
+		this.onExportError = options.onExportError;
 	};
 
 	/**
@@ -588,6 +594,10 @@ class Handler implements HandlerOptions {
 			}
 		}
 		obj.set(key, value);
+		if (key === 'fontFamily' || key === 'lineHeight' || key === 'charSpacing' || key === 'wordSpacing') {
+			(obj as FabricObject & { initDimensions?: () => void }).initDimensions?.();
+			obj.set('dirty', true);
+		}
 		obj.setCoords();
 		this.canvas.renderAll();
 		const { id, superType, type, player, width, height } = obj as any;
@@ -683,17 +693,18 @@ class Handler implements HandlerOptions {
 	/**
 	 * Set the image
 	 * @param {FabricImage} obj
-	 * @param {(File | string)} [source]
+	 * @param {unknown} [source]
 	 * @param {boolean} [keepSize] Keep size of previous Image
 	 * @param {Partial<fabric.ImageProps>} [options]
 	 * @returns
 	 */
 	public setImage = (
 		obj: FabricImage,
-		source?: File | string,
+		source?: unknown,
 		keepSize?: boolean,
 		options?: Partial<fabric.ImageProps>,
 	): Promise<FabricImage> => {
+		const resolvedSource = getImageSource(source);
 		const { height, scaleY } = obj;
 		const renderCallbaack = (imgObj: FabricImage, src: string) => {
 			if (keepSize) {
@@ -711,7 +722,7 @@ class Handler implements HandlerOptions {
 					})
 					.catch(() => resolve(obj));
 			};
-			if (!source) {
+			if (!resolvedSource) {
 				obj.set('file', null);
 				obj.set('src', './images/sample/transparentBg.png');
 				applySource('./images/sample/transparentBg.png', {
@@ -720,21 +731,21 @@ class Handler implements HandlerOptions {
 				});
 				return;
 			}
-			if (source instanceof File) {
+			if (typeof resolvedSource !== 'string') {
 				const reader = new FileReader();
 				reader.onload = () => {
-					obj.set('file', source);
+					obj.set('file', resolvedSource);
 					obj.set('src', reader.result as string);
 					applySource(reader.result as string, {
 						dirty: true,
 						...options,
 					});
 				};
-				reader.readAsDataURL(source);
+				reader.readAsDataURL(resolvedSource);
 			} else {
 				obj.set('file', null);
-				obj.set('src', source);
-				applySource(source, {
+				obj.set('src', resolvedSource);
+				applySource(resolvedSource, {
 					dirty: true,
 					crossOrigin: 'anonymous',
 					...options,
@@ -958,8 +969,10 @@ class Handler implements HandlerOptions {
 		createdObj.toObject = ((propertiesToInclude: any[] = []) => {
 			const serialized = nativeToObject(propertiesToInclude);
 			const pendingSource = createdObj.get('src');
-			if (pendingSource) {
+			if (typeof pendingSource === 'string' && pendingSource.trim()) {
 				serialized.src = pendingSource;
+			} else {
+				delete (serialized as Partial<typeof serialized>).src;
 			}
 			const element = createdObj.getElement();
 			if (!element.width && !element.height) {
@@ -975,7 +988,7 @@ class Handler implements HandlerOptions {
 		createdObj.set({
 			filters: this.imageHandler.createFilters(filters),
 		});
-		const loadPromise = this.setImage(createdObj, src || file).then(() => {
+		const loadPromise = this.setImage(createdObj, getImageSource(src) ?? getImageSource(file)).then(() => {
 			if (centerAfterLoad && createdObj.canvas) {
 				this.centerObject(createdObj, true);
 				createdObj.canvas.requestRenderAll();
@@ -1835,15 +1848,17 @@ class Handler implements HandlerOptions {
 		// reset the viewportTransform to default (no zoom)
 		this.canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
 		const { name, ...exportOptions } = option;
-		const dataUrl = this.canvas.toDataURL({
-			...exportOptions,
+		const exportCanvas = this.canvas.toCanvasElement(exportMultiplier, {
 			left,
 			top,
 			width,
 			height,
-			enableRetinaScaling: false,
-			multiplier: exportMultiplier,
-		} as any);
+		});
+		const dataUrl = exportCanvas.toDataURL(
+			`image/${String(exportOptions.format || 'png')}`,
+			Number(exportOptions.quality ?? 1),
+		);
+		this.canvas.renderAll();
 
 		if (dataUrl) {
 			const anchorEl = document.createElement('a');
@@ -1858,8 +1873,8 @@ class Handler implements HandlerOptions {
 		this.canvas.requestRenderAll();
 	};
 
-	/** Save the workarea as a cropped SVG document. */
-	public saveCanvasSVG = (option = { name: 'New Image' }) => {
+	/** Save the workarea as a CorelDRAW-compatible SVG with editable text. */
+	public saveCanvasSVG(option = { name: 'New Image' }) {
 		if (!this.workarea) return;
 		const bounds = this.workarea.getBoundingRect();
 		const width = bounds.width;
@@ -1874,57 +1889,44 @@ class Handler implements HandlerOptions {
 			width: String(width),
 			height: String(height),
 		});
-		const svgDocument = new DOMParser().parseFromString(rawSvg, 'image/svg+xml');
-		const svgRoot = svgDocument.documentElement;
-		const parserError = svgDocument.querySelector('parsererror');
-		let svg = rawSvg;
-		if (!parserError && svgRoot.localName === 'svg') {
-			const svgNamespace = 'http://www.w3.org/2000/svg';
-			const inkscapeNamespace = 'http://www.inkscape.org/namespaces/inkscape';
-			const xmlNamespace = 'http://www.w3.org/2000/xmlns/';
-			svgRoot.setAttributeNS(xmlNamespace, 'xmlns:inkscape', inkscapeNamespace);
-			const layerNames = new Map(
-				this.canvas.getObjects().map((object: any) => [
-					String(object.id || ''),
-					String(object.name || (object.id === 'workarea' ? '画布' : object.id) || object.type || '图层'),
-				]),
-			);
-			Array.from(svgRoot.children).forEach(element => {
-				if (
-					element.localName === 'rect'
-					&& element.getAttribute('width') === '100%'
-					&& element.getAttribute('height') === '100%'
-				) {
-					element.remove();
+		let svg: string;
+		try {
+			const fontSources = new Map<string, {
+				family: string;
+				url: string;
+				weight: string | number;
+				style: string;
+			}>();
+			const collectFontSources = (object: any) => {
+				if (!object || typeof object !== 'object') return;
+				const family = String(object.fontFamily || '').trim();
+				const url = String(object.fontUrl || object.font_url || '').trim();
+				if (family && url && !/^(data:|blob:)/i.test(url)) {
+					const weight = object.fontWeight || 'normal';
+					const style = object.fontStyle || 'normal';
+					fontSources.set(`${family}\u0000${url}\u0000${weight}\u0000${style}`, {
+						family,
+						url,
+						weight,
+						style,
+					});
 				}
+				if (typeof object.getObjects === 'function') object.getObjects().forEach(collectFontSources);
+			};
+			this.canvas.getObjects().forEach(collectFontSources);
+			svg = exportCorelCompatibleSvg({
+				rawSvg,
+				bounds,
+				backgroundColor: String((this.workarea as any).backgroundColor || '#ffffff'),
+				fontSources: Array.from(fontSources.values()),
+				printGuides: this.workareaHandler.getRenderedPrintGuides(),
+				layerNames: new Map(this.canvas.getObjects().map((object: any) => [String(object.id || ''), String(object.name || (object.id === 'workarea' ? '画布' : object.id) || object.type || '图层')])) ,
 			});
-			const backgroundLayer = svgDocument.createElementNS(svgNamespace, 'g');
-			backgroundLayer.setAttribute('id', 'workarea-background');
-			backgroundLayer.setAttribute('data-layer-name', '背景填充');
-			backgroundLayer.setAttributeNS(inkscapeNamespace, 'inkscape:groupmode', 'layer');
-			backgroundLayer.setAttributeNS(inkscapeNamespace, 'inkscape:label', '背景填充');
-			const background = svgDocument.createElementNS(svgNamespace, 'rect');
-			background.setAttribute('x', String(bounds.left));
-			background.setAttribute('y', String(bounds.top));
-			background.setAttribute('width', String(width));
-			background.setAttribute('height', String(height));
-			background.setAttribute('fill', String((this.workarea as any).backgroundColor || '#ffffff'));
-			backgroundLayer.appendChild(background);
-			const firstObjectLayer = Array.from(svgRoot.querySelectorAll('[id]')).find(element => (
-				layerNames.has(element.getAttribute('id') || '')
-			));
-			svgRoot.insertBefore(backgroundLayer, firstObjectLayer || null);
-			svgDocument.querySelectorAll('[id]').forEach(element => {
-				const id = element.getAttribute('id') || '';
-				const layerName = layerNames.get(id);
-				if (!layerName) return;
-				element.setAttribute('data-layer-name', layerName);
-				if (element.localName === 'g') {
-					element.setAttributeNS(inkscapeNamespace, 'inkscape:groupmode', 'layer');
-					element.setAttributeNS(inkscapeNamespace, 'inkscape:label', layerName);
-				}
-			});
-			svg = new XMLSerializer().serializeToString(svgDocument);
+		} catch (error) {
+			const exportError = error instanceof Error ? error : new Error(String(error));
+			console.error('[SVG] 导出失败，未下载损坏文件', exportError);
+			this.onExportError?.('svg', exportError);
+			return;
 		}
 		const objectUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
 		const anchorEl = document.createElement('a');
@@ -1934,7 +1936,54 @@ class Handler implements HandlerOptions {
 		anchorEl.click();
 		anchorEl.remove();
 		window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-	};
+	}
+
+	/** Save the workarea with text converted to paths by text-to-svg. */
+	public async saveCanvasTextToSVG(option = { name: 'New Image' }) {
+		if (!this.workarea) return;
+		const bounds = this.workarea.getBoundingRect();
+		const width = bounds.width;
+		const height = bounds.height;
+		const rawSvg = this.canvas.toSVG({
+			viewBox: { x: bounds.left, y: bounds.top, width, height },
+			width: String(width),
+			height: String(height),
+		});
+		const fontSources = new Map<string, { family: string; url: string }>();
+		const collectFontSources = (object: any) => {
+			if (!object || typeof object !== 'object') return;
+			const family = String(object.fontFamily || '').trim();
+			const url = String(object.fontUrl || object.font_url || '').trim();
+			if (family && url && !/^(data:|blob:)/i.test(url)) fontSources.set(`${family}\u0000${url}`, { family, url });
+			if (typeof object.getObjects === 'function') object.getObjects().forEach(collectFontSources);
+		};
+		this.canvas.getObjects().forEach(collectFontSources);
+
+		let svg: string;
+		try {
+			svg = await exportTextToSvg({
+				rawSvg,
+				bounds,
+				backgroundColor: String((this.workarea as any).backgroundColor || '#ffffff'),
+				fontSources: Array.from(fontSources.values()),
+				printGuides: this.workareaHandler.getRenderedPrintGuides(),
+				layerNames: new Map(this.canvas.getObjects().map((object: any) => [String(object.id || ''), String(object.name || (object.id === 'workarea' ? '画布' : object.id) || object.type || '图层')])) ,
+			});
+		} catch (error) {
+			const exportError = error instanceof Error ? error : new Error(String(error));
+			console.error('[text-to-svg] 导出失败，未下载损坏文件', exportError);
+			this.onExportError?.('svg', exportError);
+			return;
+		}
+		const objectUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+		const anchorEl = document.createElement('a');
+		anchorEl.href = objectUrl;
+		anchorEl.download = `${option.name}-text-to-svg路径.svg`;
+		document.body.appendChild(anchorEl);
+		anchorEl.click();
+		anchorEl.remove();
+		window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+	}
 
 	/**
 	 * Sets "angle" of an instance with centered rotation

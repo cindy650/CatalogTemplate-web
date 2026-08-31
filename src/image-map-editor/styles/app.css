@@ -814,6 +814,7 @@
   --rde-amber: #D97706;
   --rde-red: #DC2626;
   --rde-canvas-background: #EEF2F7;
+  --rde-canvas-loading-mask: rgba(238, 242, 247, 0.88);
   --rde-active-surface: #EAF2FF;
   --rde-control-background: #FFFFFF;
   --rde-section-background: #F8FAFC;
@@ -881,6 +882,7 @@
   --rde-amber: #F0AC4C;
   --rde-red: #EF6A5B;
   --rde-canvas-background: #1C2128;
+  --rde-canvas-loading-mask: rgba(28, 33, 40, 0.88);
   --rde-active-surface: rgba(94, 224, 189, 0.14);
   --rde-control-background: #111918;
   --rde-section-background: #151E1C;
@@ -2355,6 +2357,21 @@
   height: 100%;
 }
 
+.rde-font-loading-overlay {
+  position: absolute;
+  z-index: 500;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--rde-shell-text);
+  background: var(--rde-canvas-loading-mask);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .rde-editor-inspector {
   min-width: 0;
   min-height: 0;
@@ -2463,7 +2480,7 @@
 .rde-imagemap-layer-panel {
 	display: flex;
 	min-height: 180px;
-	flex: 0 1 460px;
+	flex: 0 0 460px;
   flex-direction: column;
   overflow: hidden;
   border-top: 1px solid var(--rde-shell-border);
@@ -2472,7 +2489,8 @@
 
 .rde-imagemap-object-properties {
   min-height: 0;
-  flex: 1 1 auto;
+  /* Collapse content must scroll inside this region instead of changing the layer panel height. */
+  flex: 1 1 0;
   overflow: hidden;
 }
 
@@ -3126,6 +3144,11 @@
   box-shadow: none;
 }
 
+.rde-imagemap-items .rde-canvas-list-item > div {
+  width: 100%;
+  min-width: 0;
+}
+
 .rde-imagemap-items .rde-canvas-list-item-text {
   min-width: 0;
   flex: 1;
@@ -3133,6 +3156,12 @@
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rde-imagemap-items .rde-canvas-list-item-actions {
+  flex: 0 0 auto !important;
+  margin-left: auto;
+  padding-left: 8px;
 }
 
 .rde-imagemap-items .rde-canvas-list-item-actions .ant-btn:not(.ant-btn-dangerous) {

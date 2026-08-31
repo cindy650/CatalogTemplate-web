@@ -1,5 +1,5 @@
 import { CheckCircleOutlined, FileImageOutlined, PictureOutlined, SaveOutlined, SelectOutlined } from '@ant-design/icons';
-import { Badge, Button, Menu, Popconfirm, message } from 'antd';
+import { Badge, Button, Menu, Popconfirm, Spin, Tooltip, message } from 'antd';
 import { debounce } from 'lodash-es';
 import React, { Component } from 'react';
 
@@ -43,6 +43,7 @@ import {
 	type ImageMapSizeSchemeValue,
 } from './ImageMapSizeScheme';
 import ImageMapTitle from './ImageMapTitle';
+import { serializeImageLayer } from '../../canvas/utils/imageSource';
 
 const propertiesToInclude = [
 	'id',
@@ -147,9 +148,10 @@ interface ImageMapEditorState {
 	animations: any[];
 	styles: any[];
 	dataSources: any[];
-	fontOptions: Array<{ key: string; value: string; label: string; family: string; filePath: string }>;
+	fontOptions: Array<{ key: string; value: string; label: string; family: string; filePath: string; aliases?: string[] }>;
 	fontFamiliesError: string;
 	fontFamiliesLoading: boolean;
+	fontLayoutFontsLoading: boolean;
 	editing: boolean;
 	descriptors: DescriptorMap;
 	objects?: any[];
@@ -184,7 +186,13 @@ export interface ImageMapEditorProps {
 	loadFontLayouts?: ImageMapFontLayoutLoader;
 	loadFontLayoutSizeOptions?: ImageMapFontLayoutSizeOptionLoader;
 	loadFontLayoutSize?: ImageMapFontLayoutSizeLoader;
-	loadTextFonts?: (search: string) => Promise<Array<{ id: string; family: string; label: string; filePath: string }>>;
+	loadTextFonts?: (search: string) => Promise<Array<{
+		id: string;
+		family: string;
+		label: string;
+		filePath: string;
+		aliases?: string[];
+	}>>;
 	applyTextFont?: (family: string, filePath: string) => Promise<void>;
 	saveFontLayout?: ImageMapFontLayoutSaver;
 	sizeOptions?: ImageMapFontLayoutSizeOption[];
@@ -209,6 +217,21 @@ const createBasicInfo = (
 	templateName: initialValue?.templateName ?? '',
 });
 
+function getSerializedObjectCenter(object: Record<string, any>) {
+	const rawWidth = Number(object.width ?? object.workareaWidth);
+	const rawHeight = Number(object.height ?? object.workareaHeight);
+	const width = (Number.isFinite(rawWidth) ? rawWidth : 0) * (Number.isFinite(Number(object.scaleX)) ? Number(object.scaleX) : 1);
+	const height = (Number.isFinite(rawHeight) ? rawHeight : 0) * (Number.isFinite(Number(object.scaleY)) ? Number(object.scaleY) : 1);
+	const left = Number(object.left) || 0;
+	const top = Number(object.top) || 0;
+	const originX = String(object.originX || 'left').toLowerCase();
+	const originY = String(object.originY || 'top').toLowerCase();
+	return {
+		x: originX === 'center' ? left : originX === 'right' ? left - width / 2 : left + width / 2,
+		y: originY === 'center' ? top : originY === 'bottom' ? top - height / 2 : top + height / 2,
+	};
+}
+
 class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState> {
 	static contextType = EditorThemeContext;
 	declare context: React.ContextType<typeof EditorThemeContext>;
@@ -221,9 +244,13 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		item => item.id === this.props.initialActiveSizeSchemeId,
 	) ? this.props.initialActiveSizeSchemeId! : this.initialSizeSchemes[0].id;
 	private initialSizeSchemeApplied = false;
-	private fitCanvasFrame?: number;
+	private fitCanvasTimer?: number;
 	private textFontRequestId = 0;
+	/** The unique font_name is the primary key; duplicate aliases never replace it. */
 	private fontAssets = new Map<string, string>();
+	private fontSearchCache = new Map<string, ImageMapEditorState['fontOptions']>();
+	private textFontSelectionRequestIds = new Map<string, number>();
+	private fontLayoutLoadCount = 0;
 	private selectedFontLayoutId: ImageMapFontLayoutOption['id'] | undefined = this.props.selectedFontLayoutId;
 	private sizeLayoutRequestId = 0;
 	private visibleActivities = editorActivities.filter(
@@ -246,6 +273,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		fontOptions: [],
 		fontFamiliesError: '',
 		fontFamiliesLoading: false,
+		fontLayoutFontsLoading: false,
 		editing: false,
 		descriptors: {},
 		objects: undefined,
@@ -296,17 +324,15 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 	};
 
 	scheduleInitialFitCanvas = (handler: CanvasInstance['handler']) => {
-		if (this.fitCanvasFrame !== undefined) {
-			window.cancelAnimationFrame(this.fitCanvasFrame);
+		if (this.fitCanvasTimer !== undefined) {
+			window.clearTimeout(this.fitCanvasTimer);
 		}
-		this.fitCanvasFrame = window.requestAnimationFrame(() => {
-			this.fitCanvasFrame = window.requestAnimationFrame(() => {
-				this.fitCanvasFrame = undefined;
-				handler.zoomHandler.zoomToFit();
-				const center = handler.canvas.getCenterPoint();
-				handler.zoomHandler.zoomToPoint(center, handler.canvas.getZoom() * 0.96);
-			});
-		});
+		this.fitCanvasTimer = window.setTimeout(() => {
+			this.fitCanvasTimer = undefined;
+			handler.zoomHandler.zoomToFit();
+			const center = handler.canvas.getCenterPoint();
+			handler.zoomHandler.zoomToPoint(center, handler.canvas.getZoom() * 0.96);
+		}, 500);
 	};
 
 	componentDidMount() {
@@ -325,9 +351,10 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 
 	componentWillUnmount() {
 		this.textFontRequestId += 1;
+		this.textFontSelectionRequestIds.clear();
 		this.sizeLayoutRequestId += 1;
-		if (this.fitCanvasFrame !== undefined) {
-			window.cancelAnimationFrame(this.fitCanvasFrame);
+		if (this.fitCanvasTimer !== undefined) {
+			window.clearTimeout(this.fitCanvasTimer);
 		}
 	}
 
@@ -352,6 +379,8 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		}
 		if (prevProps.loadTextFonts !== this.props.loadTextFonts) {
 			this.textFontRequestId += 1;
+			this.fontSearchCache.clear();
+			this.fontAssets.clear();
 			this.setState({ fontOptions: [], fontFamiliesError: '', fontFamiliesLoading: false });
 		}
 	}
@@ -364,12 +393,16 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			return;
 		}
 
+		const query = search.trim();
+		const cached = this.fontSearchCache.get(query.toLocaleLowerCase());
+		if (cached) {
+			cached.forEach(asset => this.cacheFontAsset(asset));
+			this.setState({ fontOptions: cached, fontFamiliesError: '', fontFamiliesLoading: false });
+			return;
+		}
 		this.setState({ fontFamiliesError: '', fontFamiliesLoading: true });
 		try {
-			const assets = await loader(search.trim());
-			assets.forEach(asset => {
-				if (asset.family.trim() && asset.filePath.trim()) this.fontAssets.set(asset.family.trim(), asset.filePath.trim());
-			});
+			const assets = await loader(query);
 			const fontOptions = assets
 				.filter(asset => asset.family.trim())
 				.map(asset => {
@@ -380,9 +413,12 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 						label,
 						family: asset.family.trim(),
 						filePath: asset.filePath.trim(),
+						aliases: asset.aliases,
 					};
 				});
 			if (requestId === this.textFontRequestId) {
+				fontOptions.forEach(asset => this.cacheFontAsset(asset));
+				this.fontSearchCache.set(query.toLocaleLowerCase(), fontOptions);
 				this.setState({ fontOptions, fontFamiliesLoading: false });
 			}
 		} catch (error) {
@@ -396,6 +432,20 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		}
 	};
 
+	private cacheFontAsset = (asset: { family?: string; filePath?: string; aliases?: string[] }) => {
+		const filePath = String(asset.filePath || '').trim();
+		if (!filePath) return;
+		const names = [asset.family, ...(asset.aliases || [])]
+			.map(value => String(value || '').trim())
+			.filter(Boolean);
+		names.forEach(name => {
+			const key = name.toLocaleLowerCase();
+			if (!this.fontAssets.has(key) || key === String(asset.family || '').trim().toLocaleLowerCase()) {
+				this.fontAssets.set(key, filePath);
+			}
+		});
+	};
+
 	onTextFontSearch = (search: string) => {
 		const normalizedSearch = search.trim();
 		if (!normalizedSearch) {
@@ -406,14 +456,27 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		void this.loadTextFonts(normalizedSearch);
 	};
 
-	onTextFontSelect = async (font: { family: string; filePath: string }) => {
+	onTextFontSelect = async (font: { family: string; filePath: string; aliases?: string[] }) => {
 		const family = font.family.trim();
 		const filePath = font.filePath.trim();
-		if (!family) return;
-		await this.props.applyTextFont?.(family, filePath);
-		this.fontAssets.set(family, filePath);
-		this.canvasRef?.handler.set('fontFamily', family);
-		this.canvasRef?.handler.set('fontUrl' as any, filePath);
+		const target = this.canvasRef?.canvas.getActiveObject() as any;
+		const targetId = target?.id ? String(target.id) : '';
+		if (!family || !filePath || !target || !targetId || targetId === 'workarea') return false;
+		const requestId = (this.textFontSelectionRequestIds.get(targetId) ?? 0) + 1;
+		this.textFontSelectionRequestIds.set(targetId, requestId);
+		try {
+			await this.props.applyTextFont?.(family, filePath);
+		} catch (error) {
+			void message.error(error instanceof Error ? error.message : String(error));
+			return false;
+		}
+		if (this.textFontSelectionRequestIds.get(targetId) !== requestId) return false;
+		const currentTarget = this.canvasRef?.handler.getObjects().find(object => String(object.id) === targetId);
+		if (!currentTarget) return false;
+		this.cacheFontAsset(font);
+		this.canvasRef?.handler.setByObject(currentTarget, 'fontUrl', filePath);
+		this.canvasRef?.handler.setByObject(currentTarget, 'fontFamily', family);
+		return true;
 	};
 
 	canvasHandlers = {
@@ -469,6 +532,9 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		}, 300),
 		onZoom: (zoom: number) => {
 			this.setState({ zoomRatio: zoom });
+		},
+		onExportError: (format: 'svg', error: Error) => {
+			if (format === 'svg') void message.error(`SVG 导出失败：${error.message}`);
 		},
 		onChange: (selectedItem: any, changedValues: Record<string, any>, allValues: Record<string, any>) => {
 			const { editing } = this.state;
@@ -568,7 +634,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				return;
 			}
 			if (changedKey === 'fontFamily') {
-				const fontUrl = this.fontAssets.get(String(changedValue).trim());
+				const fontUrl = this.fontAssets.get(String(changedValue).trim().toLocaleLowerCase());
 				this.canvasRef?.handler.set('fontUrl' as any, fontUrl || '');
 				this.canvasRef?.handler.set(changedKey, changedValue);
 				return;
@@ -911,6 +977,11 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				name: this.state.basicInfo.templateName || '画布',
 			});
 		},
+		onSaveTextToSVG: () => {
+			void this.canvasRef?.handler.saveCanvasTextToSVG({
+				name: this.state.basicInfo.templateName || '画布',
+			});
+		},
 		onActivityChange: (activeActivity: string) => {
 			this.setState({ activeActivity });
 		},
@@ -952,6 +1023,17 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			this.setState({
 				sizeSchemes,
 				activeSizeSchemeId: nextSizeScheme.id,
+				selectedItem: null,
+				animations: [],
+				styles: [],
+				dataSources: [],
+			});
+			// A new size starts with an empty variant. Keep the workarea, but remove
+			// all content so the old size's layers cannot be saved accidentally.
+			this.canvasRef?.handler.clear(false);
+			this.canvasRef?.handler.workareaHandler.setPrintDimensions({
+				...nextSizeScheme,
+				spineWidth: resolveImageMapSpineWidth(nextSizeScheme),
 			});
 			this.props.onSizeSchemesChange?.(sizeSchemes);
 		},
@@ -1086,7 +1168,8 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 
 	getCanvasFontLayoutLayers = (): ImageMapFontLayoutLayerData => {
 		const canvasRef = this.canvasRef;
-		const serializedObjects = canvasRef?.handler.exportJSON().filter(obj => !!obj.id) || [];
+		const serializedObjects = (canvasRef?.handler.exportJSON().filter(obj => !!obj.id) || [])
+			.map(object => serializeImageLayer(object));
 		return {
 			// Persist Fabric's original scene coordinates. The workarea remains
 			// part of the document for preview cropping, but is not API canvas
@@ -1123,6 +1206,49 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 	};
 
 	/** Import layout objects without letting a serialized workarea overwrite the selected size. */
+	preloadFontLayoutFonts = async (objects: any[]) => {
+		const applyTextFont = this.props.applyTextFont;
+		const fonts = new Map<string, { family: string; filePath: string }>();
+		const collectFonts = (object: any) => {
+			if (!object || typeof object !== 'object') return;
+			const family = typeof object.fontFamily === 'string' ? object.fontFamily.trim() : '';
+			const filePath = typeof object.fontUrl === 'string' ? object.fontUrl.trim() : '';
+			if (family && filePath) {
+				fonts.set(`${family}\u0000${filePath}`, { family, filePath });
+			}
+			if (Array.isArray(object.objects)) {
+				object.objects.forEach(collectFonts);
+			}
+		};
+		objects.forEach(collectFonts);
+		if (fonts.size === 0) return;
+		if (!applyTextFont) {
+			throw new Error('编辑器未配置字体加载器，无法加载图层字体。');
+		}
+		this.fontLayoutLoadCount += 1;
+		if (this.fontLayoutLoadCount === 1) {
+			this.setState({ fontLayoutFontsLoading: true });
+		}
+		try {
+			const results = await Promise.allSettled(Array.from(fonts.values(), async ({ family, filePath }) => {
+				try {
+					await applyTextFont(family, filePath);
+					this.fontAssets.set(family, filePath);
+				} catch (error) {
+					const reason = error instanceof Error ? error.message : String(error);
+					throw new Error(`字体“${family}”加载失败：${reason}`);
+				}
+			}));
+			const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+			if (failure) throw failure.reason;
+		} finally {
+			this.fontLayoutLoadCount = Math.max(0, this.fontLayoutLoadCount - 1);
+			if (this.fontLayoutLoadCount === 0) {
+				this.setState({ fontLayoutFontsLoading: false });
+			}
+		}
+	};
+
 	importFontLayoutLayers = async (
 		layers: ImageMapFontLayoutLayerData,
 		applyWorkareaAppearance = false,
@@ -1149,6 +1275,21 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		const objects = typeof structuredClone === 'function'
 			? structuredClone(serializedObjects)
 			: JSON.parse(JSON.stringify(serializedObjects));
+		if (serializedWorkarea) {
+			// The workarea is not imported, so align content from the saved scene
+			// center to the current one before adding objects to the canvas.
+			const savedCenter = getSerializedObjectCenter(serializedWorkarea);
+			const currentCenter = handler.workarea.getCenterPoint();
+			const deltaX = currentCenter.x - savedCenter.x;
+			const deltaY = currentCenter.y - savedCenter.y;
+			if (deltaX !== 0 || deltaY !== 0) {
+				objects.forEach(object => {
+					if (typeof object.left === 'number') object.left += deltaX;
+					if (typeof object.top === 'number') object.top += deltaY;
+				});
+			}
+		}
+		await this.preloadFontLayoutFonts(objects);
 		handler.clear(false);
 		await handler.importJSON(objects);
 		handler.canvas.setViewportTransform(viewportTransform);
@@ -1185,6 +1326,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			fontOptions,
 			fontFamiliesError,
 			fontFamiliesLoading,
+			fontLayoutFontsLoading,
 			objects,
 			activeActivity,
 			sizeSchemes,
@@ -1212,6 +1354,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			onChangeDataSources,
 			onSaveImage,
 			onSaveSVG,
+			onSaveTextToSVG,
 			onAddSizeScheme,
 			onDeleteSizeScheme,
 			onSaveSizeScheme,
@@ -1302,6 +1445,17 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				>
 					导出 SVG
 				</Button>
+				<Tooltip title="text-to-svg">
+					<Button
+						className="rde-action-btn"
+						type="text"
+						size="small"
+						icon={<FileImageOutlined />}
+						onClick={onSaveTextToSVG}
+					>
+						导出转曲svg
+					</Button>
+				</Tooltip>
 			</React.Fragment>
 		);
 
@@ -1319,7 +1473,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 								onClick={this.props.onExit}
 							/>
 						) : null}
-						<span className="rde-editor-breadcrumb-section">图片地图</span>
+						<span className="rde-editor-breadcrumb-section">模板编辑</span>
 						<span className="rde-editor-breadcrumb-divider">/</span>
 						<strong>
 							{basicInfo.templateName || i18next.t('imagemap.imagemap-editor')}
@@ -1414,6 +1568,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 							onRemove={onRemove}
 							onSelect={onSelect}
 							onZoom={onZoom}
+							onExportError={this.canvasHandlers.onExportError}
 							onTooltip={onTooltip}
 							onContext={onContext}
 							onTransaction={onTransaction}
@@ -1428,6 +1583,12 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 								textColor: canvasTheme.rulerTextColor,
 							}}
 						/>
+						{fontLayoutFontsLoading ? (
+							<div className="rde-font-loading-overlay" role="status" aria-live="polite">
+								<Spin size="large" />
+								<span>正在加载字体...</span>
+							</div>
+						) : null}
 					</div>
 					<EditorStatusBar
 						left={

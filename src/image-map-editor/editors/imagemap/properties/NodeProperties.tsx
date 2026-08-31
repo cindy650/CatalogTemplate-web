@@ -9,11 +9,11 @@ import PropertyDefinition from './PropertyDefinition';
 
 interface NodePropertiesProps {
 	canvasRef?: CanvasInstance;
-	fontOptions?: Array<{ key: string; value: string; label: string; family: string; filePath: string }>;
+	fontOptions?: Array<{ key: string; value: string; label: string; family: string; filePath: string; aliases?: string[] }>;
 	fontFamiliesError?: string;
 	fontFamiliesLoading?: boolean;
 	onFontSearch?: (search: string) => void;
-	onFontSelect?: (font: { family: string; filePath: string }) => void;
+	onFontSelect?: (font: { family: string; filePath: string; aliases?: string[] }) => void | Promise<void | boolean>;
 	selectedItem?: any;
 	onChange?: (selectedItem: any, changedValues: Record<string, any>, allValues: Record<string, any>) => void;
 }

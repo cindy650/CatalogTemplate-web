@@ -1,7 +1,7 @@
 import * as fabric from 'fabric';
 
 import { Handler } from '.';
-import { FabricImage, PrintGuide, PrintUnit, WorkareaLayout, WorkareaObject } from '../models';
+import { FabricImage, PrintGuide, PrintGuideKind, PrintUnit, WorkareaLayout, WorkareaObject } from '../models';
 import { VideoObject } from '../objects/Video';
 
 class WorkareaHandler {
@@ -88,17 +88,45 @@ class WorkareaHandler {
 		];
 		const horizontalPositions = [0, bleed, height - bleed, height];
 		const guides: PrintGuide[] = [];
-		const add = (orientation: PrintGuide['orientation'], position: number) => {
+		const add = (orientation: PrintGuide['orientation'], position: number, kind: PrintGuideKind) => {
 			if (position < 0 || position > (orientation === 'vertical' ? width : height)) return;
 			if (
 				!guides.some(guide => guide.orientation === orientation && Math.abs(guide.position - position) < 0.01)
 			) {
-				guides.push({ orientation, position });
+				guides.push({ orientation, position, kind });
 			}
 		};
-		verticalPositions.forEach(position => add('vertical', position));
-		horizontalPositions.forEach(position => add('horizontal', position));
+		// The workarea edge and the two spine-bleed edges are bleed guides.
+		// Content boundaries are solid; bleed boundaries are blue dashed lines.
+		add('vertical', verticalPositions[0], 'bleed');
+		add('vertical', verticalPositions[1], 'content');
+		add('vertical', verticalPositions[2], 'bleed');
+		add('vertical', verticalPositions[3], 'content');
+		add('vertical', verticalPositions[4], 'content');
+		add('vertical', verticalPositions[5], 'bleed');
+		add('vertical', verticalPositions[6], 'content');
+		add('vertical', verticalPositions[7], 'bleed');
+		add('horizontal', horizontalPositions[0], 'bleed');
+		add('horizontal', horizontalPositions[1], 'content');
+		add('horizontal', horizontalPositions[2], 'content');
+		add('horizontal', horizontalPositions[3], 'bleed');
 		return guides;
+	};
+
+	/** Return guide positions in the rendered workarea coordinate system. */
+	public getRenderedPrintGuides = (): PrintGuide[] => {
+		const workarea = this.handler.workarea;
+		if (!workarea?.printGuides?.length) return [];
+		const logicalWidth = workarea.workareaWidth || workarea.width || 1;
+		const logicalHeight = workarea.workareaHeight || workarea.height || 1;
+		const renderedWidth = workarea.width * workarea.scaleX;
+		const renderedHeight = workarea.height * workarea.scaleY;
+		const scaleX = renderedWidth / logicalWidth;
+		const scaleY = renderedHeight / logicalHeight;
+		return workarea.printGuides.map(guide => ({
+			...guide,
+			position: guide.position * (guide.orientation === 'vertical' ? scaleX : scaleY),
+		}));
 	};
 
 	private beforePrintGuideRender = () => {
@@ -119,17 +147,25 @@ class WorkareaHandler {
 		ctx.lineWidth = 1 / zoom;
 		ctx.strokeStyle = '#1677ff';
 		ctx.setLineDash([6 / zoom, 4 / zoom]);
-		ctx.beginPath();
 		workarea.printGuides.forEach(guide => {
+			ctx.beginPath();
+			ctx.setLineDash(guide.kind === 'content' ? [] : [6 / zoom, 4 / zoom]);
 			if (guide.orientation === 'vertical') {
-				ctx.moveTo(origin.x + guide.position, origin.y);
-				ctx.lineTo(origin.x + guide.position, origin.y + height);
+				const logicalWidth = workarea.workareaWidth || workarea.width || 1;
+				const renderedWidth = workarea.width * workarea.scaleX;
+				const position = guide.position * renderedWidth / logicalWidth;
+				ctx.moveTo(origin.x + position, origin.y);
+				ctx.lineTo(origin.x + position, origin.y + height);
 			} else {
-				ctx.moveTo(origin.x, origin.y + guide.position);
-				ctx.lineTo(origin.x + width, origin.y + guide.position);
+				const logicalHeight = workarea.workareaHeight || workarea.height || 1;
+				const renderedHeight = workarea.height * workarea.scaleY;
+				const position = guide.position * renderedHeight / logicalHeight;
+				ctx.moveTo(origin.x, origin.y + position);
+				ctx.lineTo(origin.x + width, origin.y + position);
 			}
+			ctx.stroke();
 		});
-		ctx.stroke();
+		ctx.setLineDash([]);
 		this.drawPrintDimensionLabels(ctx, origin, height, workarea, zoom);
 		ctx.restore();
 	};

@@ -7,11 +7,11 @@ import ImageMapList from './ImageMapList';
 
 interface ImageMapConfigurationsProps {
 	canvasRef?: CanvasInstance;
-	fontOptions?: Array<{ key: string; value: string; label: string; family: string; filePath: string }>;
+	fontOptions?: Array<{ key: string; value: string; label: string; family: string; filePath: string; aliases?: string[] }>;
 	fontFamiliesError?: string;
 	fontFamiliesLoading?: boolean;
 	onFontSearch?: (search: string) => void;
-	onFontSelect?: (font: { family: string; filePath: string }) => void;
+	onFontSelect?: (font: { family: string; filePath: string; aliases?: string[] }) => void | Promise<void | boolean>;
 	selectedItem?: FabricObject;
 	onChange?: (selectedItem: FabricObject | undefined, changedValues: any, allValues: any) => void;
 	onChangeAnimations?: (animations: any[]) => void;

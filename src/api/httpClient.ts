@@ -32,6 +32,14 @@ function readAccessToken(): string {
   }
 }
 
+export function getApiAuthHeaders(): Record<string, string> {
+  const apiToken = configuredApiToken || readAccessToken();
+  return apiToken ? {
+    'X-API-Key': apiToken,
+    Authorization: 'Bearer ' + apiToken,
+  } : {};
+}
+
 function responseErrorMessage(error: AxiosError<ApiErrorPayload>): string {
   const payload = error.response?.data;
   if (payload && typeof payload === 'object') {
@@ -57,13 +65,8 @@ export const httpClient = axios.create({
 
 httpClient.interceptors.request.use(
   (config) => {
-    const token = readAccessToken();
-    config.headers.set('Accept', 'application/json');
-    const apiToken = configuredApiToken || token;
-    if (apiToken) {
-      config.headers.set('X-API-Key', apiToken);
-      config.headers.set('Authorization', 'Bearer ' + apiToken);
-    }
+    if (!config.headers.get('Accept')) config.headers.set('Accept', 'application/json');
+    Object.entries(getApiAuthHeaders()).forEach(([key, value]) => config.headers.set(key, value));
     return config;
   },
   (error) => Promise.reject(error)

@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { App, Button, Dropdown, Empty, Input, Pagination, Popconfirm, Result, Select, Space, Table, Tag, Tooltip } from 'antd';
-import { CheckOutlined, DownOutlined, EditOutlined, PrinterOutlined, ReloadOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
+import { App, Button, Empty, Input, Pagination, Popconfirm, Result, Select, Space, Table, Tag, Tooltip } from 'antd';
+import { CheckOutlined, EditOutlined, PrinterOutlined, ReloadOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import type { Order, OrderItem, OrderListFilters, OrderTemplateExportFormat } from '@shared/domain';
+import type { Order, OrderItem, OrderListFilters } from '@shared/domain';
 import { browserAlbumApi } from '../../api';
 import type { OrdersPageProps } from '../types';
 import { downloadExportFile } from './downloadExport';
@@ -13,7 +13,6 @@ type OrderTableRow = {
   item: OrderItem;
 };
 
-const templateExportFormats: OrderTemplateExportFormat[] = ['png', 'jpg', 'svg', 'eps'];
 const productInformationColumnWidth = 420;
 
 const orderStatusColors: Record<number, string> = {
@@ -181,6 +180,16 @@ function orderFieldWidth(field: string): number {
   return 160;
 }
 
+function formatCreatedAt(value?: string): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 export default function OrdersPage({
   orders,
   orderTotal,
@@ -200,7 +209,6 @@ export default function OrdersPage({
   const [exportingOrderId, setExportingOrderId] = useState('');
   const [advancingOrderId, setAdvancingOrderId] = useState('');
   const [sendingPreviewOrderId, setSendingPreviewOrderId] = useState('');
-  const [exportFormats, setExportFormats] = useState<Record<string, OrderTemplateExportFormat>>({});
   const [orderNumber, setOrderNumber] = useState(filters.orderNumber ?? '');
   const [shop, setShop] = useState<string | undefined>(filters.shop);
   const [status, setStatus] = useState<number | undefined>(filters.status);
@@ -257,18 +265,30 @@ export default function OrdersPage({
       ...textMarkedColumns,
       ...productInformationColumn
     ];
+  const createdAtColumn: ColumnsType<OrderTableRow> = [{
+    title: '创建时间',
+    key: 'created-at',
+    width: 178,
+    render: (_: unknown, { order }: OrderTableRow) => (
+      <span className="order-cell-content">{formatCreatedAt(order.createdAt)}</span>
+    )
+  }];
 
   async function confirmProduction(order: Order): Promise<void> {
-    const format = exportFormats[order.id] ?? 'png';
     setExportingOrderId(order.id);
+    let downloadStarted = false;
     try {
-      const file = await browserAlbumApi.orders.exportTemplate(order, format);
+      const file = await browserAlbumApi.orders.exportTemplate(order);
       downloadExportFile(file);
+      downloadStarted = true;
+      await browserAlbumApi.orders.advanceStatus(order);
       await reloadOrders();
-      message.success(`订单 ${order.orderNo} 已完成“${orderActionText(order)}”，${format.toUpperCase()} 文件已开始下载`);
+      message.success(`订单 ${order.orderNo} 的生成文件 ZIP 已开始下载，订单状态已更新`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(`订单 ${order.orderNo} 确认生产失败：${errorMessage}`);
+      message.error(downloadStarted
+        ? `订单 ${order.orderNo} 的 ZIP 已开始下载，但状态更新失败：${errorMessage}`
+        : `订单 ${order.orderNo} 确认生产失败：${errorMessage}`);
     } finally {
       setExportingOrderId('');
     }
@@ -324,7 +344,8 @@ export default function OrdersPage({
   }
 
   const columns: ColumnsType<OrderTableRow> = [
-    ...orderedDataColumns,
+      ...orderedDataColumns,
+      ...createdAtColumn,
     {
       title: '状态',
       key: 'status',
@@ -379,7 +400,7 @@ export default function OrdersPage({
                     openOrderInEditor(order);
                   }}
                 >
-                  编辑订单模板
+                  编辑订单
                 </Button>
               </span>
             </Tooltip>
@@ -410,61 +431,29 @@ export default function OrdersPage({
             </Popconfirm>
           )}
           {order.status === 2 && (
-            <Space.Compact block>
-              <Popconfirm
-                title="确认生产？"
-                description={`确认后将生成并下载 ${(exportFormats[order.id] ?? 'png').toUpperCase()} 工程文件。`}
-                okText="确认"
-                cancelText="取消"
-                onConfirm={(event) => {
-                  event?.stopPropagation();
-                  void confirmProduction(order);
-                }}
-                onCancel={(event) => event?.stopPropagation()}
+            <Popconfirm
+              title="下载生成文件zip"
+              description="确认下载该订单的生成文件 ZIP？"
+              okText="下载"
+              cancelText="取消"
+              onConfirm={(event) => {
+                event?.stopPropagation();
+                void confirmProduction(order);
+              }}
+              onCancel={(event) => event?.stopPropagation()}
+            >
+              <Button
+                block
+                size="small"
+                type="primary"
+                icon={<PrinterOutlined />}
+                loading={exportingOrderId === order.id}
+                disabled={Boolean(exportingOrderId) && exportingOrderId !== order.id}
+                onClick={(event) => event.stopPropagation()}
               >
-                <Tooltip title="可选择工程文件格式">
-                  <Button
-                    className="order-export-button"
-                    size="small"
-                    type="primary"
-                    icon={<PrinterOutlined />}
-                    loading={exportingOrderId === order.id}
-                    disabled={Boolean(exportingOrderId) && exportingOrderId !== order.id}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <span className="order-export-label">
-                      <span>{orderActionText(order)}</span>
-                      <span className="order-action-format">{(exportFormats[order.id] ?? 'png').toUpperCase()}</span>
-                    </span>
-                  </Button>
-                </Tooltip>
-              </Popconfirm>
-              <Dropdown
-                menu={{
-                  selectedKeys: [exportFormats[order.id] ?? 'png'],
-                  items: templateExportFormats.map((format) => ({
-                    key: format,
-                    label: format.toUpperCase()
-                  })),
-                  onClick: ({ key, domEvent }) => {
-                    domEvent.stopPropagation();
-                    setExportFormats((current) => ({
-                      ...current,
-                      [order.id]: key as OrderTemplateExportFormat
-                    }));
-                  }
-                }}
-              >
-                <Button
-                  size="small"
-                  type="primary"
-                  aria-label="选择导出格式"
-                  icon={<DownOutlined />}
-                  disabled={Boolean(exportingOrderId)}
-                  onClick={(event) => event.stopPropagation()}
-                />
-              </Dropdown>
-            </Space.Compact>
+                {orderActionText(order)}
+              </Button>
+            </Popconfirm>
           )}
           {order.status >= 3 && order.status <= 4 && orderActionText(order) && (
             <Popconfirm

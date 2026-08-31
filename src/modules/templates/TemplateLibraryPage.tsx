@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { App, Avatar, Button, Card, Empty, Image, Input, Space, Spin, Tag, Tooltip } from 'antd';
-import { AppstoreOutlined, EditOutlined, PlusOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, EditOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
 import type { CatalogSizeTemplate, Shop } from '@shared/domain';
 import { browserAlbumApi } from '../../api';
 import type { TemplateLibraryPageProps } from '../types';
@@ -17,14 +17,16 @@ function TemplateLibraryCard({ template, shops, onOpen }: { template: CatalogSiz
   const shopLabel = [template.shop, template.shopName || shopName(shop), template.name || '未命名尺寸模板'].filter(Boolean).join(' ');
   return (
     <Card className="template-library-card" hoverable onClick={onOpen}>
-      <div className="template-library-card-preview" onClick={(event) => event.stopPropagation()}>{template.previewImage ? <Image src={template.previewImage} alt={`${template.name} 预览图`} preview={{ src: template.previewImage }} style={{ objectFit: 'cover', objectPosition: 'right center' }} /> : <Avatar shape="square" icon={<SettingOutlined />} />}</div>
+      <div className="template-library-card-preview" onClick={(event) => event.stopPropagation()}>{template.previewImage ? <Image className="template-library-card-preview-image" src={template.previewImage} alt={`${template.name} 预览图`} preview={{ src: template.previewImage }} /> : <Avatar shape="square" icon={<SettingOutlined />} />}</div>
       <div className="template-library-card-head">
-        <div className="template-library-card-title"><strong>{shopLabel || '未命名尺寸模板'}</strong></div>
+        <div className="template-library-card-title">
+          <strong>{shopLabel || '未命名尺寸模板'}</strong>
+        </div>
         <Tooltip title="进入尺寸模板编辑"><Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${template.name}`} onClick={(event) => { event.stopPropagation(); onOpen(); }} /></Tooltip>
       </div>
       <div className="template-library-card-stats"><div><span>尺寸方案</span><strong>{template.sizeOptions.length}</strong></div><div><span>当前尺寸</span><strong>{template.selectedSizeOptionId || currentSize?.label || '未选择'}</strong></div></div>
       <div className="template-library-card-options">{template.sizeOptions.slice(0, 4).map((option) => <Tag color={option.id === template.selectedSizeOptionId ? 'blue' : undefined} key={option.id}>{option.label || option.id}</Tag>)}</div>
-      <div className="template-library-card-footer"><span>{template.updatedAt ? new Date(template.updatedAt).toLocaleDateString() : '未保存'}</span><Button type="link" onClick={(event) => { event.stopPropagation(); onOpen(); }}>打开编辑</Button></div>
+      <div className="template-library-card-footer"><span>id: {template.id} · {template.createdAt ? `创建：${new Date(template.createdAt).toLocaleDateString()}` : '创建时间未知'}</span><Button type="link" onClick={(event) => { event.stopPropagation(); onOpen(); }}>打开编辑</Button></div>
     </Card>
   );
 }
@@ -33,6 +35,7 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
   const { message } = App.useApp();
   const [templates, setTemplates] = useState<CatalogSizeTemplate[]>([]);
   const [loading, setLoading] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [keyword, setKeyword] = useState('');
   const [editingTemplateId, setEditingTemplateId] = useState<number | 'new'>();
   const product = products.find((item) => item.id === selectedProductId);
@@ -59,7 +62,7 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
       }
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [message, selectedProductId, selectedShopId]);
+  }, [message, reloadVersion, selectedProductId, selectedShopId]);
 
   useEffect(() => {
     onEditorModeChange?.(editingTemplateId !== undefined);
@@ -79,6 +82,7 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
       return (
         <ImageMapEditorTestPage
           shops={shops}
+          productDefaults={product.commonSpecValues}
           initialShopId={selectedShopId === 'ALL' ? undefined : selectedShopId}
           initialProductId={selectedProductId}
           onExit={() => setEditingTemplateId(undefined)}
@@ -107,6 +111,13 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
         <div className="template-library-filter"><Tag color={currentShop ? 'blue' : 'green'}>{currentShop ? shopName(currentShop) : '全部店铺'}</Tag><span>{visibleTemplates.length} 个尺寸模板</span></div>
         <div className="template-library-toolbar-actions">
           <Input allowClear prefix={<SearchOutlined />} placeholder="搜索尺寸模板或商品" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+          <Button
+            icon={<ReloadOutlined spin={loading} />}
+            loading={loading}
+            onClick={() => setReloadVersion((current) => current + 1)}
+          >
+            刷新
+          </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditingTemplateId('new')}>新增模板</Button>
         </div>
       </div>

@@ -23,9 +23,9 @@ import type {
   OrderListFilters,
   OrderListResult,
   OrderStatusDefinition,
-  OrderTemplateExportFormat,
   ProductCategory,
   ProductCategoryPayload,
+  ProductCommonSpecValue,
   ProductShop,
   Shop,
   ShopPayload,
@@ -46,7 +46,7 @@ import type {
   TemplateImportFinalizeResult,
   TemplateSummary
 } from '@shared/domain';
-import { apiBaseUrl, apiRequest } from './api/httpClient';
+import { apiBaseUrl, apiRequest, httpClient } from './api/httpClient';
 
 const storageKeys = {
   templates: 'album-web-templates',
@@ -175,41 +175,23 @@ function printImageValue(value: unknown): string {
 }
 
 export type OrderTemplateExportFile = {
-  base64?: string;
-  ossUrl?: string;
+  blob: Blob;
   filename: string;
-  mimeType: string;
 };
 
-function templateExportValue(value: unknown): OrderTemplateExportFile {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('导出接口未返回文件数据。');
-  }
-
-  const record = value as Record<string, unknown>;
-  const ossUrl = textValue(firstValue(record, 'oss_url', 'ossUrl')).trim();
-  const base64 = textValue(firstValue(record, 'file_base64', 'fileBase64')).trim();
-  if (ossUrl || base64) {
-    let urlFilename = '';
-    if (ossUrl) {
-      try {
-        urlFilename = decodeURIComponent(new URL(ossUrl).pathname.split('/').at(-1) ?? '');
-      } catch {
-        urlFilename = '';
-      }
+function downloadFilename(contentDisposition: unknown, fallback: string): string {
+  const value = textValue(contentDisposition).trim();
+  const encodedFilename = value.match(/filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i)?.[1];
+  if (encodedFilename) {
+    try {
+      return decodeURIComponent(encodedFilename.trim().replace(/^"|"$/g, ''));
+    } catch {
+      // Fall through to the plain filename form.
     }
-    return {
-      base64: base64 || undefined,
-      ossUrl: ossUrl || undefined,
-      filename: textValue(record.filename).trim() || urlFilename || 'order-template.zip',
-      mimeType: textValue(firstValue(record, 'mime_type', 'mimeType')).trim() || 'application/octet-stream'
-    };
   }
 
-  const wrappedValue = firstValue(record, 'data', 'result');
-  if (wrappedValue !== undefined && wrappedValue !== value) return templateExportValue(wrappedValue);
-
-  throw new Error('导出接口未返回文件数据。');
+  const plainFilename = value.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
+  return (plainFilename?.[1] || plainFilename?.[2] || fallback).trim();
 }
 
 function normalizeOrderStatuses(value: unknown): OrderStatusDefinition[] {
@@ -289,6 +271,7 @@ function toOrder(value: unknown, index: number): Order {
     status: orderStatusValue(record.status),
     statusText: textValue(record.status_text).trim() || '未设置',
     statusButtonText: textValue(record.status_button_text).trim(),
+    createdAt: textValue(firstValue(record, 'created_at', 'createdAt')),
     ...(numberValue(firstValue(record, 'shop_id', 'shopId')) > 0
       ? { shopId: numberValue(firstValue(record, 'shop_id', 'shopId')) }
       : {}),
@@ -399,6 +382,41 @@ function toProductShop(value: unknown): ProductShop {
   };
 }
 
+function toProductCommonSpecValue(value: unknown): ProductCommonSpecValue {
+  const record = recordValue(value);
+  const rawPageCountOptions = record.pageCountOptions ?? record.page_count_options;
+  const pageCountOptions = Array.isArray(rawPageCountOptions)
+    ? rawPageCountOptions.map(numberValue).filter((count) => count > 0)
+    : [];
+  const rawUnit = textValue(record.unit ?? record.size_unit).toLowerCase();
+  const unit = rawUnit === 'mm' || rawUnit === 'cm' ? rawUnit : 'in';
+  const rawSpineWidthMode = textValue(record.spineWidthMode ?? record.spine_width_mode);
+  return {
+    id: textValue(record.id),
+    label: textValue(record.label),
+    unit,
+    pageCount: numberValue(record.pageCount ?? record.page_count),
+    pageCountOptions,
+    sideWidth: numberValue(record.sideWidth ?? record.side_width ?? record.single_side_width),
+    sideHeight: numberValue(record.sideHeight ?? record.side_height ?? record.single_side_height),
+    bleed: numberValue(record.bleed),
+    spineWidthMode: rawSpineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed',
+    spineWidth: numberValue(record.spineWidth ?? record.spine_width),
+    minSpineWidth: numberValue(record.minSpineWidth ?? record.min_spine_width),
+    maxSpineWidth: numberValue(record.maxSpineWidth ?? record.max_spine_width),
+    spineBleed: numberValue(record.spineBleed ?? record.spine_bleed),
+    paperThickness: numberValue(record.paperThickness ?? record.paper_thickness)
+  };
+}
+
+function normalizeProductCommonSpecValues(value: unknown): ProductCommonSpecValue[] {
+  let raw = value;
+  if (typeof raw === 'string' && raw.trim()) {
+    try { raw = JSON.parse(raw) as unknown; } catch { raw = []; }
+  }
+  return Array.isArray(raw) ? raw.map(toProductCommonSpecValue).filter((item) => item.id || item.label) : [];
+}
+
 function toProductCategory(value: unknown): ProductCategory {
   const record = recordValue(value);
   const rawShops = Array.isArray(record.shops) ? record.shops : [];
@@ -407,13 +425,29 @@ function toProductCategory(value: unknown): ProductCategory {
     : rawShops.map((shop) => toProductShop(shop).id).filter((id) => id > 0);
   const rawProductNames = record.product_names ?? record.productNames;
   const productNames = Array.isArray(rawProductNames) ? rawProductNames.map(textValue).filter(Boolean) : [];
+  const rawSpecifications = record.specifications ?? record.specification ?? record.specifications_json ?? record.specificationsJson;
+  let specifications: string[] = [];
+  if (Array.isArray(rawSpecifications)) {
+    specifications = rawSpecifications.map(textValue).map((item) => item.trim()).filter(Boolean);
+  } else if (typeof rawSpecifications === 'string' && rawSpecifications.trim()) {
+    try {
+      const parsed = JSON.parse(rawSpecifications) as unknown;
+      if (Array.isArray(parsed)) specifications = parsed.map(textValue).map((item) => item.trim()).filter(Boolean);
+    } catch {
+      specifications = [];
+    }
+  }
   const rawTemplateIds = record.size_template_ids ?? record.sizeTemplateIds;
+  const rawCommonSpecValues = record.common_spec_values ?? record['常用规格值'] ?? record.commonSpecValues;
   return {
     id: numberValue(record.id),
     name: textValue(record.name).trim(),
     description: textValue(record.description),
     enabled: record.enabled === undefined ? true : record.enabled !== false && numberValue(record.enabled) !== 0,
     productNames,
+    specifications,
+    specificationField: textValue(record.specification_field ?? record.specificationField),
+    commonSpecValues: normalizeProductCommonSpecValues(rawCommonSpecValues),
     shopIds,
     shops: rawShops.map(toProductShop).filter((shop) => shop.id > 0),
     sizeTemplateIds: Array.isArray(rawTemplateIds) ? rawTemplateIds.map(numberValue).filter((id) => id > 0) : []
@@ -854,6 +888,7 @@ function normalizeFontLayoutLibraryTemplate(value: unknown): FontLayoutLibraryTe
 }
 
 function catalogSizeTemplatePayload(payload: CatalogSizeTemplatePayload): Record<string, unknown> {
+  const selectedSizeOptionId = payload.selectedSizeOptionId?.trim();
   return {
     ...(payload.productId !== undefined && payload.productId > 0 ? { product_id: payload.productId } : {}),
     shop_id: payload.shopId,
@@ -868,6 +903,18 @@ function catalogSizeTemplatePayload(payload: CatalogSizeTemplatePayload): Record
     display_unit: payload.displayUnit,
     page_count: payload.pageCount,
     page_count_options: payload.pageCountOptions,
+    selected_size_option_id: selectedSizeOptionId || null,
+    size_options: payload.sizeOptions.map((option) => ({
+      id: option.id,
+      label: option.label,
+      select: option.id === selectedSizeOptionId,
+      size_unit: option.fields.size_unit,
+      single_side_width: option.fields.single_side_width,
+      single_side_height: option.fields.single_side_height,
+      bleed: option.fields.bleed,
+      spine_width: option.fields.spine_width,
+      spine_bleed: option.fields.spine_bleed
+    })),
     size_template_info: payload.sizeTemplateInfo
   };
 }
@@ -989,7 +1036,16 @@ export const browserAlbumApi = {
     create: async (payload: ProductCategoryPayload): Promise<ProductCategory> => toProductCategory(unwrapApiData(await apiRequest<unknown>({
       method: 'POST',
       url: '/products',
-      data: { name: payload.name, description: payload.description ?? '', product_names: payload.productNames, shop_ids: payload.shopIds, enabled: payload.enabled ?? true }
+      data: {
+        name: payload.name,
+        description: payload.description ?? '',
+        product_names: payload.productNames,
+        specifications: payload.specifications,
+        specification_field: payload.specificationField,
+        common_spec_values: payload.commonSpecValues ?? [],
+        shop_ids: payload.shopIds,
+        enabled: payload.enabled ?? true
+      }
     }))),
     update: async (productId: number, payload: Partial<ProductCategoryPayload>): Promise<ProductCategory> => toProductCategory(unwrapApiData(await apiRequest<unknown>({
       method: 'PATCH',
@@ -998,6 +1054,9 @@ export const browserAlbumApi = {
         ...(payload.name !== undefined ? { name: payload.name } : {}),
         ...(payload.description !== undefined ? { description: payload.description } : {}),
         ...(payload.productNames !== undefined ? { product_names: payload.productNames } : {}),
+        ...(payload.specifications !== undefined ? { specifications: payload.specifications } : {}),
+        ...(payload.specificationField !== undefined ? { specification_field: payload.specificationField } : {}),
+        ...(payload.commonSpecValues !== undefined ? { common_spec_values: payload.commonSpecValues } : {}),
         ...(payload.shopIds !== undefined ? { shop_ids: payload.shopIds } : {}),
         ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {})
       }
@@ -1085,20 +1144,29 @@ export const browserAlbumApi = {
       })
     ),
     exportTemplate: async (
-      order: Pick<Order, 'id' | 'orderNo'>,
-      format: OrderTemplateExportFormat
-    ): Promise<OrderTemplateExportFile> => templateExportValue(
-      await apiRequest<unknown>({
+      order: Pick<Order, 'id' | 'orderNo'>
+    ): Promise<OrderTemplateExportFile> => {
+      const response = await httpClient.request<Blob>({
         method: 'POST',
-        url: '/orders/template-export',
+        url: '/orders/template-export/download',
         timeout: 120_000,
+        responseType: 'blob',
+        headers: {
+          Accept: 'application/zip, application/octet-stream'
+        },
         data: {
           order_id: order.id,
-          order_number: order.orderNo,
-          format
+          order_number: order.orderNo
         }
-      })
-    ),
+      });
+      return {
+        blob: response.data,
+        filename: downloadFilename(
+          response.headers['content-disposition'],
+          `${order.orderNo || 'order-template'}.zip`
+        )
+      };
+    },
     sendPreviewImages: async (order: Pick<Order, 'id' | 'orderNo'>): Promise<void> => {
       await apiRequest<unknown>({
         method: 'POST',
@@ -1114,6 +1182,7 @@ export const browserAlbumApi = {
       await apiRequest<unknown>({
         method: 'POST',
         url: '/orders/status/advance',
+        timeout: 120_000,
         data: {
           order_id: order.id,
           order_number: order.orderNo

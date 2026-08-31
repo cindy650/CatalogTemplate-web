@@ -8,8 +8,14 @@ const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      '@shared': resolve(projectRoot, 'src/shared')
+      '@shared': resolve(projectRoot, 'src/shared'),
+      // text-to-svg evaluates path.join while loading in the browser even
+      // though this editor always uses its URL-based async loader.
+      path: resolve(projectRoot, 'src/image-map-editor/canvas/utils/browserPathShim.ts'),
     }
+  },
+  define: {
+    __dirname: JSON.stringify(''),
   },
   plugins: [react()],
   server: {

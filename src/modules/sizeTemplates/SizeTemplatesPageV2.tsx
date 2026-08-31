@@ -37,12 +37,12 @@ import {
   Tooltip
 } from 'antd';
 import type {
-  AddMountedFontLayoutPayload,
   CatalogSizeOption,
   CatalogSizeOptionFields,
   CatalogSizeTemplate,
   CatalogSizeTemplatePayload,
   FontLayoutCanvas,
+  FontLayoutLayerData,
   FontLibraryItem,
   FontLayoutLibraryTemplate,
   MountedFontLayout,
@@ -99,9 +99,10 @@ function canvasForOption(option?: CatalogSizeOption): FontLayoutCanvas {
   };
 }
 
-function blankTemplate(shopId: number): CatalogSizeTemplate {
+function blankTemplate(shopId: number, productId?: number): CatalogSizeTemplate {
   return {
     id: 0,
+    ...(productId !== undefined ? { productId } : {}),
     shopId,
     shopName: '',
     name: '',
@@ -200,6 +201,15 @@ function layoutDraft(layout: MountedSizeLayout): TemplateImportDraft {
     safe_distance: 0,
     options: { coordinate_system: 'top-left', scaling: { mode: 'uniform' } }
   };
+}
+
+function editorLayersPayload(layers: Record<string, unknown>[]): FontLayoutLayerData {
+  return { objects: clone(layers), animations: [], styles: [], dataSources: [] };
+}
+
+function layoutApiId(layout?: MountedFontLayout): number | undefined {
+  const id = numberValue(layout?.fontLayoutTemplateId);
+  return id > 0 ? id : undefined;
 }
 
 function layoutFromDraft(draft: TemplateImportDraft, sizeOptionId: string, fallbackCanvas: FontLayoutCanvas): MountedSizeLayout {
@@ -318,6 +328,7 @@ function PageCountOptionsEditor({ value, selected, onChange, onSelect }: { value
 export default function SizeTemplatesPageV2({
   shops,
   selectedShopId,
+  selectedProductId,
   initialTemplateId,
   embedded = false,
   onEditorExit
@@ -352,7 +363,10 @@ export default function SizeTemplatesPageV2({
   const [renameValue, setRenameValue] = useState('');
   const [fonts, setFonts] = useState<FontLibraryItem[]>([]);
   const importPreviewRef = useRef<HTMLInputElement>(null);
+  const templatePreviewRef = useRef<HTMLInputElement>(null);
+  const [templatePreviewFile, setTemplatePreviewFile] = useState<File>();
   const editorExitRef = useRef(onEditorExit);
+  const loadedVariantRef = useRef('');
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -378,7 +392,7 @@ export default function SizeTemplatesPageV2({
 
   useEffect(() => {
     void loadTemplates();
-  }, [selectedShopId]);
+  }, [selectedShopId, selectedProductId]);
 
   useEffect(() => {
     if (initialTemplateId === undefined) return;
@@ -412,10 +426,80 @@ export default function SizeTemplatesPageV2({
     void loadLibrary(shopId, librarySearch);
   }, [libraryShopId, librarySearch, draft?.shopId]);
 
+  useEffect(() => {
+    const layoutId = layoutApiId(activeLayout);
+    if (!draft?.id || draft.id <= 0 || !layoutId || !selectedSizeOptionId) return;
+    const key = `${draft.id}:${layoutId}:${selectedSizeOptionId}`;
+    if (loadedVariantRef.current === key) return;
+    loadedVariantRef.current = key;
+    let cancelled = false;
+    void browserAlbumApi.fontLayoutLibrary.get(layoutId, {
+      sizeTemplateId: draft.id,
+      sizeOptionId: selectedSizeOptionId
+    }).then((layout) => {
+      if (cancelled) return;
+      const sizeOption = draft.sizeOptions.find((option) => option.id === selectedSizeOptionId);
+      const canvas = canvasForOption(sizeOption);
+      const sizeLayout: MountedSizeLayout = {
+        sizeOptionId: selectedSizeOptionId,
+        layers: clone(layout.layers.objects),
+        canvas
+      };
+      updateDraft({
+        fontLayouts: draft.fontLayouts.map((item) => item.id === activeLayout?.id
+          ? {
+            ...item,
+            name: layout.name || item.name,
+            previewImage: layout.previewImage || item.previewImage,
+            sizeLayouts: [
+              ...item.sizeLayouts.filter((candidate) => candidate.sizeOptionId !== selectedSizeOptionId),
+              sizeLayout
+            ]
+          }
+          : item)
+      });
+    }).catch(() => {
+      // A missing variant is valid; the editor falls back to the local/base layers.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeLayout?.id, activeLayout?.fontLayoutTemplateId, draft?.id, selectedSizeOptionId]);
+
+  useEffect(() => {
+    const layoutId = numberValue(draft?.selectedFontLayoutId);
+    if (!draft?.id || draft.id <= 0 || !layoutId || draft.fontLayouts.some((layout) => layoutApiId(layout) === layoutId)) return;
+    let cancelled = false;
+    void browserAlbumApi.fontLayoutLibrary.get(layoutId, {
+      sizeTemplateId: draft.id,
+      sizeOptionId: selectedSizeOptionId || undefined
+    }).then((library) => {
+      if (cancelled) return;
+      const sizeOptionId = selectedSizeOptionId || draft.sizeOptions[0]?.id || '';
+      const sizeOption = draft.sizeOptions.find((option) => option.id === sizeOptionId);
+      const mounted: MountedFontLayout = {
+        id: String(library.id),
+        fontLayoutTemplateId: library.id,
+        name: library.name,
+        previewImage: library.previewImage,
+        sizeLayouts: sizeOptionId
+          ? [{ sizeOptionId, layers: clone(library.layers.objects), canvas: canvasForOption(sizeOption) }]
+          : []
+      };
+      updateDraft({ fontLayouts: [...draft.fontLayouts, mounted] });
+      setSelectedLayoutId(mounted.id);
+    }).catch(() => {
+      // A stale selected_font_layout_id should not prevent the template editor opening.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft?.id, draft?.selectedFontLayoutId, draft?.fontLayouts.length, selectedSizeOptionId]);
+
   async function loadTemplates() {
     setLoading(true);
     try {
-      setTemplates(await browserAlbumApi.catalogSizeTemplates.list({ shopId: selectedShopId }));
+      setTemplates(await browserAlbumApi.catalogSizeTemplates.list({ shopId: selectedShopId, productId: selectedProductId }));
     } catch (error) {
       setTemplates([]);
       message.error(error instanceof Error ? error.message : String(error));
@@ -437,6 +521,8 @@ export default function SizeTemplatesPageV2({
   }
 
   function resetEditor(template: CatalogSizeTemplate) {
+    loadedVariantRef.current = '';
+    setTemplatePreviewFile(undefined);
     setDraft(template);
     setInfoJson(JSON.stringify(template.sizeTemplateInfo, null, 2));
     const firstSize = template.selectedSizeOptionId || template.sizeOptions[0]?.id || '';
@@ -465,7 +551,7 @@ export default function SizeTemplatesPageV2({
     setView('editor');
     setEditorCollapsed(false);
     if (!template) {
-      const next = blankTemplate(shopId);
+      const next = blankTemplate(shopId, selectedProductId);
       resetEditor(next);
       return;
     }
@@ -548,11 +634,12 @@ export default function SizeTemplatesPageV2({
     const values = await sizeOptionForm.validateFields();
     if (!draft) return;
     const generatedId = `${numberValue(values.single_side_width)}x${numberValue(values.single_side_height)}`;
-    const baseId = isDraftSizeOption(editingSizeOption) ? generatedId : values.id?.trim() || generatedId;
+    const existing = draft.sizeOptions.find((item) => item.id === editingSizeOption);
+    // Persisted option IDs are stable business keys for size-specific layers.
+    const baseId = existing && !isDraftSizeOption(existing.id) ? existing.id : generatedId;
     let id = baseId;
     let suffix = 2;
     while (draft.sizeOptions.some((option) => option.id === id && option.id !== editingSizeOption)) id = `${baseId}-${suffix++}`;
-    const existing = draft.sizeOptions.find((item) => item.id === editingSizeOption);
     if (values.size_unit !== 'in' && !existing) {
       message.warning('新增尺寸方案请先填写英寸数据');
       return;
@@ -611,7 +698,17 @@ export default function SizeTemplatesPageV2({
         return;
       }
       setSubmitting(true);
-      const saved = next.id > 0 ? await browserAlbumApi.catalogSizeTemplates.update(next.id, templatePayload(next)) : await browserAlbumApi.catalogSizeTemplates.create(templatePayload(next));
+      let response = next.id > 0 ? await browserAlbumApi.catalogSizeTemplates.update(next.id, templatePayload(next)) : await browserAlbumApi.catalogSizeTemplates.create(templatePayload(next));
+      if (templatePreviewFile && response.id > 0) {
+        const previewImage = await browserAlbumApi.catalogSizeTemplates.uploadPreview(response.id, templatePreviewFile);
+        response = { ...response, previewImage };
+      }
+      // The size-template endpoint may omit the separately managed font layouts.
+      // Keep the editor's local associations so they can be persisted through the
+      // font-layout sync endpoint immediately after creating the template.
+      const saved = next.fontLayouts.length === 0
+        ? response
+        : { ...response, fontLayouts: next.fontLayouts, selectedFontLayoutId: response.selectedFontLayoutId ?? next.selectedFontLayoutId };
       resetEditor(saved);
       await loadTemplates();
       message.success(next.id > 0 ? '尺寸模板已保存' : '尺寸模板已新增');
@@ -642,18 +739,16 @@ export default function SizeTemplatesPageV2({
     if (!library) return;
     const name = mountName.trim() || library.name;
     try {
-      let mounted: MountedFontLayout;
-      if (draft.id > 0) {
-        mounted = await browserAlbumApi.catalogSizeTemplates.mountedLayouts.add(draft.id, { fontLayoutTemplateId: library.id, sourceSizeOptionId, name } satisfies AddMountedFontLayoutPayload);
-      } else {
-        mounted = {
-          id: `local-${crypto.randomUUID()}`,
-          fontLayoutTemplateId: library.id,
-          name,
-          previewImage: library.previewImage,
-          sizeLayouts: draft.sizeOptions.map((option) => option.id === sourceSizeOptionId ? { sizeOptionId: option.id, layers: clone(library.layers.objects), canvas: canvasForOption(option) } : { sizeOptionId: option.id, layers: [], canvas: canvasForOption(option) })
-        };
-      }
+      const mounted: MountedFontLayout = {
+        // The library template ID is the stable ID used by the new API.
+        id: String(library.id),
+        fontLayoutTemplateId: library.id,
+        name,
+        previewImage: library.previewImage,
+        sizeLayouts: draft.sizeOptions.map((option) => option.id === sourceSizeOptionId
+          ? { sizeOptionId: option.id, layers: clone(library.layers.objects), canvas: canvasForOption(option) }
+          : { sizeOptionId: option.id, layers: [], canvas: canvasForOption(option) })
+      };
       updateDraft({ fontLayouts: [...draft.fontLayouts, mounted] });
       setSelectedLayoutId(mounted.id);
       setSelectedSizeOptionId(sourceSizeOptionId);
@@ -666,7 +761,6 @@ export default function SizeTemplatesPageV2({
   async function removeMountedLayout(layout: MountedFontLayout) {
     if (!draft) return;
     try {
-      if (draft.id > 0 && !layout.id.startsWith('local-')) await browserAlbumApi.catalogSizeTemplates.mountedLayouts.delete(draft.id, layout.id);
       const nextLayouts = draft.fontLayouts.filter((item) => item.id !== layout.id);
       updateDraft({ fontLayouts: nextLayouts });
       setSelectedLayoutId(nextLayouts[0]?.id);
@@ -681,7 +775,8 @@ export default function SizeTemplatesPageV2({
     const layout = draft.fontLayouts.find((item) => item.id === renameLayoutId);
     if (!layout) return;
     try {
-      if (draft.id > 0 && !layout.id.startsWith('local-')) await browserAlbumApi.catalogSizeTemplates.mountedLayouts.update(draft.id, layout.id, { name: renameValue.trim() });
+      const layoutId = layoutApiId(layout);
+      if (layoutId) await browserAlbumApi.fontLayoutLibrary.update(layoutId, { name: renameValue.trim() });
       updateDraft({ fontLayouts: draft.fontLayouts.map((item) => item.id === layout.id ? { ...item, name: renameValue.trim() } : item) });
       setRenameLayoutId(undefined);
     } catch (error) {
@@ -692,9 +787,18 @@ export default function SizeTemplatesPageV2({
   async function saveCurrentSizeLayout() {
     if (!draft || !activeLayout || !activeSizeLayout || !activeSizeOption) return;
     try {
-      if (draft.id > 0 && !activeLayout.id.startsWith('local-')) {
-        const saved = await browserAlbumApi.catalogSizeTemplates.mountedLayouts.saveSize(draft.id, activeLayout.id, activeSizeOption.id, { layers: activeSizeLayout.layers, canvas: activeSizeLayout.canvas });
-        updateDraft({ fontLayouts: draft.fontLayouts.map((layout) => layout.id === activeLayout.id ? { ...layout, sizeLayouts: [...layout.sizeLayouts.filter((item) => item.sizeOptionId !== saved.sizeOptionId), saved] } : layout) });
+      const layoutId = layoutApiId(activeLayout);
+      if (draft.id > 0 && layoutId) {
+        await browserAlbumApi.fontLayoutLibrary.syncSizeOptions(layoutId, draft.id, [{
+          sizeOptionId: activeSizeOption.id,
+          layers: editorLayersPayload(activeSizeLayout.layers)
+        }]);
+        updateDraft({
+          selectedFontLayoutId: layoutId,
+          fontLayouts: draft.fontLayouts.map((layout) => layout.id === activeLayout.id
+            ? { ...layout, sizeLayouts: [...layout.sizeLayouts.filter((item) => item.sizeOptionId !== activeSizeOption.id), activeSizeLayout] }
+            : layout)
+        });
       }
       message.success(`已保存 ${activeSizeOption.label || activeSizeOption.id} 的布局`);
     } catch (error) {
@@ -713,19 +817,22 @@ export default function SizeTemplatesPageV2({
   async function syncCurrentLayout() {
     if (!draft || !activeLayout || !activeSizeOption || syncState.targets.length === 0) return;
     try {
-      if (draft.id > 0 && !activeLayout.id.startsWith('local-')) {
-        const synced = await browserAlbumApi.catalogSizeTemplates.mountedLayouts.sync(draft.id, activeLayout.id, { sourceSizeOptionId: activeSizeOption.id, targetSizeOptionIds: syncState.targets, mode: syncState.mode });
-        updateDraft({ fontLayouts: draft.fontLayouts.map((layout) => layout.id === synced.id ? synced : layout) });
-      } else {
-        const source = activeLayout.sizeLayouts.find((layout) => layout.sizeOptionId === activeSizeOption.id);
-        if (source) {
-          const nextLayouts = draft.fontLayouts.map((layout) => layout.id !== activeLayout.id ? layout : {
-            ...layout,
-            sizeLayouts: [...layout.sizeLayouts.filter((item) => !syncState.targets.includes(item.sizeOptionId)), ...syncState.targets.map((targetId) => syncLayers(source, draft.sizeOptions.find((option) => option.id === targetId), activeSizeOption, syncState.mode))]
-          });
-          updateDraft({ fontLayouts: nextLayouts });
-        }
+      const source = activeLayout.sizeLayouts.find((layout) => layout.sizeOptionId === activeSizeOption.id) ?? activeSizeLayout;
+      if (!source) return;
+      const syncedLayouts = syncState.targets.map((targetId) => syncLayers(source, draft.sizeOptions.find((option) => option.id === targetId), activeSizeOption, syncState.mode));
+      const layoutId = layoutApiId(activeLayout);
+      if (draft.id > 0 && layoutId) {
+        await browserAlbumApi.fontLayoutLibrary.syncSizeOptions(layoutId, draft.id, syncedLayouts.map((layout) => ({
+          sizeOptionId: layout.sizeOptionId,
+          layers: editorLayersPayload(layout.layers)
+        })));
       }
+      const nextLayouts = draft.fontLayouts.map((layout) => layout.id !== activeLayout.id ? layout : {
+        ...layout,
+        ...(layoutId ? { fontLayoutTemplateId: layoutId } : {}),
+        sizeLayouts: [...layout.sizeLayouts.filter((item) => !syncState.targets.includes(item.sizeOptionId)), ...syncedLayouts]
+      });
+      updateDraft({ ...(layoutId ? { selectedFontLayoutId: layoutId } : {}), fontLayouts: nextLayouts });
       setSyncState((current) => ({ ...current, open: false }));
       message.success(`已同步 ${syncState.targets.length} 个尺寸`);
     } catch (error) {
@@ -833,6 +940,7 @@ export default function SizeTemplatesPageV2({
                     <div className="size-template-editor-section">
                       <div className="size-template-section-heading"><div><span className="size-template-section-index">01</span><div><strong>基本信息</strong><small>模板归属与默认生产参数</small></div></div></div>
                       <div className="size-template-form-two-col"><Form.Item name="shopId" label="所属店铺" rules={[{ required: true, message: '请选择店铺' }]}><Select options={shops.map((shop) => ({ value: shop.id, label: shop.shopName || shop.shop || '未命名店铺' }))} onChange={(shopId) => { form.setFieldValue('products', []); updateDraft({ shopId, applicableProducts: [] }); }} /></Form.Item><Form.Item name="name" label="模板名称" rules={[{ required: true, whitespace: true, message: '请输入模板名称' }]}><Input placeholder="例如：婚礼签到册" /></Form.Item></div>
+                      <div className="size-template-preview-upload"><div><strong>预览图</strong><span>{templatePreviewFile?.name || (draft.previewImage ? '已上传预览图' : '可选，支持 PNG / JPG / WEBP')}</span></div><Button icon={<UploadOutlined />} onClick={() => templatePreviewRef.current?.click()}>选择图片</Button><input ref={templatePreviewRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; setTemplatePreviewFile(file); }} /></div>
                       <Form.Item name="products" label="适用商品"><Select mode="multiple" className="size-template-products-select" options={availableProducts.map((product) => ({ value: product, label: product }))} placeholder={availableProducts.length ? '选择商品' : '当前店铺暂无商品'} /></Form.Item>
                       <Form.Item name="pageCountOptions" label="页数选项" className="size-template-page-count-form-item"><PageCountOptionsEditor selected={draft.pageCount} onSelect={(pageCount) => updateDraft({ pageCount })} /></Form.Item>
                     </div>

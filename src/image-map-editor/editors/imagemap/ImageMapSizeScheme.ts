@@ -42,7 +42,7 @@ export const createImageMapSizeScheme = (
 ): ImageMapSizeSchemeValue => {
 	const pageCount = positiveInteger(value.pageCount, 50);
 	const pageCountOptions = createPageCountOptions(value.pageCountOptions, pageCount);
-	const label = value.label?.trim() || '9\u00d76';
+	const label = value.label?.trim() || '9*6';
 	return {
 		id: value.id?.trim() || label,
 		...(value.idIsPersisted !== undefined ? { idIsPersisted: value.idIsPersisted } : {}),
@@ -55,8 +55,8 @@ export const createImageMapSizeScheme = (
 		bleed: positiveNumber(value.bleed, 0.79),
 		spineWidthMode: value.spineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed',
 		spineWidth: positiveNumber(value.spineWidth, 0.55),
-		minSpineWidth: positiveNumber(value.minSpineWidth, 0),
-		maxSpineWidth: positiveNumber(value.maxSpineWidth, 10),
+		minSpineWidth: positiveNumber(value.minSpineWidth, 0.55),
+		maxSpineWidth: positiveNumber(value.maxSpineWidth, 0.7),
 		spineBleed: positiveNumber(value.spineBleed, 0.55),
 		paperThickness: positiveNumber(value.paperThickness, 0),
 	};

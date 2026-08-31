@@ -243,9 +243,13 @@ export type WorkareaLayout = 'fixed' | 'responsive' | 'fullscreen';
 
 export type PrintGuideOrientation = 'vertical' | 'horizontal';
 
+/** The two kinds of print guides persisted with the workarea. */
+export type PrintGuideKind = 'bleed' | 'content';
+
 export interface PrintGuide {
 	orientation: PrintGuideOrientation;
 	position: number;
+	kind?: PrintGuideKind;
 }
 
 export type PrintUnit = 'in' | 'cm' | 'mm';

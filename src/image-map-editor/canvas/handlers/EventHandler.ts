@@ -901,15 +901,22 @@ class EventHandler extends AbstractHandler {
 		const diffWidth = viewportWidth / 2 - previousWidth / 2;
 		const diffHeight = viewportHeight / 2 - previousHeight / 2;
 		if (this.handler.workarea.layout === 'fixed') {
+			// Keep the scene coordinates independent from the viewport size. The
+			// workarea is re-centered in scene space, so content must follow its
+			// actual center delta rather than the raw CSS viewport delta (which is
+			// affected by the current zoom).
+			const previousWorkareaCenter = this.handler.workarea.getCenterPoint();
 			this.canvas.centerObject(this.handler.workarea);
 			this.handler.workarea.setCoords();
-			if (this.handler.gridOption.enabled) {
-				return;
-			}
+			const nextWorkareaCenter = this.handler.workarea.getCenterPoint();
+			const workareaDelta = {
+				x: nextWorkareaCenter.x - previousWorkareaCenter.x,
+				y: nextWorkareaCenter.y - previousWorkareaCenter.y,
+			};
 			this.canvas.getObjects().forEach((obj: FabricObject) => {
 				if (obj.id !== 'workarea') {
-					const left = obj.left + diffWidth;
-					const top = obj.top + diffHeight;
+					const left = obj.left + workareaDelta.x;
+					const top = obj.top + workareaDelta.y;
 					obj.set({
 						left,
 						top,

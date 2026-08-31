@@ -15,6 +15,7 @@ export type Order = {
   status: number;
   statusText: string;
   statusButtonText: string;
+  createdAt?: string;
   shopId?: number;
   productId?: number;
   sizeTemplateId?: string;
@@ -75,12 +76,32 @@ export type ProductShop = {
   shopName: string;
 };
 
+export type ProductCommonSpecValue = {
+  id: string;
+  label: string;
+  unit: SizeTemplateUnit;
+  pageCount: number;
+  pageCountOptions: number[];
+  sideWidth: number;
+  sideHeight: number;
+  bleed: number;
+  spineWidthMode: 'fixed' | 'by_page_count';
+  spineWidth: number;
+  minSpineWidth: number;
+  maxSpineWidth: number;
+  spineBleed: number;
+  paperThickness: number;
+};
+
 export type ProductCategory = {
   id: number;
   name: string;
   description: string;
   enabled: boolean;
   productNames: string[];
+  specifications: string[];
+  specificationField: string;
+  commonSpecValues: ProductCommonSpecValue[];
   shopIds: number[];
   shops: ProductShop[];
   sizeTemplateIds: number[];
@@ -90,6 +111,9 @@ export type ProductCategoryPayload = {
   name: string;
   description?: string;
   productNames: string[];
+  specifications: string[];
+  specificationField: string;
+  commonSpecValues?: ProductCommonSpecValue[];
   shopIds: number[];
   enabled?: boolean;
 };
@@ -302,7 +326,7 @@ export type CatalogSizeTemplatePayload = {
   paperThicknessMm: number;
   spineWidthBasis: 0 | 1;
   coverSafeDistance: SafeDistance;
-  selectedSizeOptionId: string;
+  selectedSizeOptionId: string | null;
   displayUnit: SizeTemplateUnit;
   pageCount: number;
   pageCountOptions: number[];
