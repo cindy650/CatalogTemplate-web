@@ -13,8 +13,10 @@ import {
   deleteFontLayout,
   applyTextFont,
   loadFontLayoutCategories,
+  loadFontLayoutProducts,
   loadFontLayouts,
   loadTextFonts,
+  loadTextGenerationRules,
   saveFontLayout,
   updateFontLayout
 } from '../imageMapEditorTest/imageMapEditorHost';
@@ -52,6 +54,9 @@ function orderSizeScheme(order: Order): ImageMapSizeSchemeValue {
     minSpineWidth: finiteNumber(snapshot.spine_width ?? snapshot.spineWidth),
     maxSpineWidth: finiteNumber(snapshot.spine_width ?? snapshot.spineWidth),
     spineBleed: finiteNumber(snapshot.spine_bleed ?? snapshot.spineBleed),
+    backCoverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+    coverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+    spineSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
     paperThickness: 0
   };
 }
@@ -203,6 +208,7 @@ export default function OrderTemplateEditorPage({ order, shops, saveTemplate, on
         key={`order-template-${order.id}`}
         initialTheme="light"
         initialBasicInfo={{ shopId, templateName: `订单 ${order.orderNo}` }}
+        initialProductId={productId}
         initialLayers={initialLayers}
         initialSizeSchemes={[sizeScheme]}
         initialActiveSizeSchemeId={sizeScheme.id}
@@ -222,9 +228,11 @@ export default function OrderTemplateEditorPage({ order, shops, saveTemplate, on
         createFontLayout={createFontLayout}
         deleteFontLayout={deleteFontLayout}
         loadFontLayoutCategories={loadFontLayoutCategories}
-        loadFontLayouts={(currentShopId) => loadFontLayouts(currentShopId, productId)}
+        loadFontLayoutProducts={loadFontLayoutProducts}
+        loadFontLayouts={(currentShopId, currentProductId) => loadFontLayouts(currentShopId, currentProductId === undefined ? productId : Number(currentProductId))}
         applyTextFont={applyTextFont}
         loadTextFonts={loadTextFonts}
+        loadTextGenerationRules={loadTextGenerationRules}
         saveFontLayout={saveFontLayout}
         updateFontLayout={updateFontLayout}
       />

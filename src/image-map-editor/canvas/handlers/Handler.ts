@@ -18,6 +18,7 @@ import {
 	GuidelineOption,
 	InteractionMode,
 	RulerOption,
+	WorkareaSafeDistance,
 	WorkareaObject,
 	WorkareaOption,
 } from '../models';
@@ -115,6 +116,7 @@ export interface HandlerCallback {
 	 */
 	onLoad?: (handler: Handler, canvas?: fabric.Canvas) => void;
 	onExportError?: (format: 'svg', error: Error) => void;
+	onExportWarning?: (warnings: string[]) => void;
 }
 
 export interface HandlerOption {
@@ -273,6 +275,7 @@ class Handler implements HandlerOptions {
 	public onInteraction?: (interactionMode: InteractionMode) => void;
 	public onLoad?: (handler: Handler, canvas?: fabric.Canvas) => void;
 	public onExportError?: (format: 'svg', error: Error) => void;
+	public onExportWarning?: (warnings: string[]) => void;
 
 	public imageHandler: ImageHandler;
 	public chartHandler: ChartHandler;
@@ -383,6 +386,7 @@ class Handler implements HandlerOptions {
 		this.onInteraction = options.onInteraction;
 		this.onLoad = options.onLoad;
 		this.onExportError = options.onExportError;
+		this.onExportWarning = options.onExportWarning;
 	};
 
 	/**
@@ -1554,6 +1558,165 @@ class Handler implements HandlerOptions {
 	public exportJSON = () => this.canvas.toObject(this.propertiesToInclude).objects as FabricObject[];
 
 	/**
+	 * Ensure text stays inside the safe area of the face/row it belongs to
+	 * before an export is generated. The editor stores scene coordinates, so
+	 * the check is performed against the current workarea transform.
+	 */
+	public prepareTextLayersForExport = (): { warnings: string[]; blocked: boolean; objects: FabricObject[] } => {
+		const workarea = this.workarea;
+		if (!workarea) return { warnings: [], blocked: false, objects: this.exportJSON() };
+		const origin = workarea.getPointByOrigin('left', 'top');
+		const renderedWidth = Math.abs(Number(workarea.width || 0) * Number(workarea.scaleX || 1));
+		const renderedHeight = Math.abs(Number(workarea.height || 0) * Number(workarea.scaleY || 1));
+		const logicalWidth = Number(workarea.workareaWidth || workarea.width || 0);
+		const logicalHeight = Number(workarea.workareaHeight || workarea.height || 0);
+		if (!(renderedWidth > 0) || !(renderedHeight > 0) || !(logicalWidth > 0) || !(logicalHeight > 0)) {
+			return { warnings: [], blocked: false, objects: this.exportJSON() };
+		}
+		const unit = workarea.unit === 'cm' || workarea.unit === 'mm' ? workarea.unit : 'in';
+		const factor = ({ in: 96, cm: 96 / 2.54, mm: 96 / 25.4 } as const)[unit];
+		const scaleX = renderedWidth / logicalWidth;
+		const scaleY = renderedHeight / logicalHeight;
+		const bleed = Math.max(0, Number(workarea.bleed || 0));
+		const horizontalBleed = Math.max(0, Number(workarea.separateBleed ? workarea.horizontalBleed ?? bleed : bleed));
+		const verticalBleed = Math.max(0, Number(workarea.separateBleed ? workarea.verticalBleed ?? bleed : bleed));
+		const sideWidth = Math.max(0, Number(workarea.sideWidth || 0));
+		const sideHeight = Math.max(0, Number(workarea.sideHeight || 0));
+		const spineWidth = Math.max(0, Number(workarea.spineWidth || 0));
+		const spineBleed = Math.max(0, Number(workarea.spineBleed || 0));
+		// Product safe distances are stored in millimetres. Keep them separate
+		// from the serialized workarea and convert them to CSS pixels only for
+		// this export-time bounds check.
+		const normalizeSafeDistance = (value: unknown): WorkareaSafeDistance => {
+			const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+			const numberValue = (item: unknown) => {
+				const parsed = Number(item);
+				return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+			};
+			return {
+				top: numberValue(source.top),
+				right: numberValue(source.right),
+				bottom: numberValue(source.bottom),
+				left: numberValue(source.left),
+			};
+		};
+		const safeDistancePixels = (value: number) => value / 25.4 * 96;
+		const coverSafeDistance = normalizeSafeDistance(workarea.coverSafeDistance);
+		const spineSafeDistance = normalizeSafeDistance(workarea.spineSafeDistance);
+		const backCoverSafeDistance = normalizeSafeDistance(workarea.backCoverSafeDistance);
+		const horizontalFaces = (workarea.canvasRows === 2
+			? [
+				{ name: '封面', start: horizontalBleed * factor, end: (horizontalBleed + sideWidth) * factor, safe: coverSafeDistance },
+				{ name: '封底', start: (logicalWidth / factor - horizontalBleed - sideWidth) * factor, end: (logicalWidth / factor - horizontalBleed) * factor, safe: backCoverSafeDistance },
+			]
+			: [
+				{ name: '封面', start: horizontalBleed * factor, end: (horizontalBleed + sideWidth) * factor, safe: coverSafeDistance },
+				{ name: '背脊', start: (horizontalBleed + sideWidth + spineBleed) * factor, end: (horizontalBleed + sideWidth + spineBleed + spineWidth) * factor, safe: spineSafeDistance },
+				// workareaWidth is stored in CSS pixels while bleed is stored in the
+				// selected physical unit. Convert the total width back to that unit
+				// before subtracting the right-side bleed.
+				{ name: '封底', start: (horizontalBleed + sideWidth + spineBleed + spineWidth + spineBleed) * factor, end: (logicalWidth / factor - horizontalBleed) * factor, safe: backCoverSafeDistance },
+			]).map(face => ({
+			...face,
+			start: face.start * scaleX,
+			end: face.end * scaleX,
+		}));
+		const rows = workarea.canvasRows === 2 ? 2 : 1;
+		const rowGap = rows === 2 ? Math.max(0, Number(workarea.canvasRowGap || 0)) : 0;
+		const rowHeight = Math.max(1, (renderedHeight - rowGap * (rows - 1)) / rows);
+		const horizontalRows = Array.from({ length: rows }, (_, row) => {
+			const rowStart = row * (rowHeight + rowGap) + verticalBleed * factor * scaleY;
+			const rowEnd = row * (rowHeight + rowGap) + rowHeight - verticalBleed * factor * scaleY;
+			return { name: rows === 2 ? `第${row + 1}排` : '画布', start: rowStart, end: rowEnd };
+		});
+		const safeBounds = (start: number, end: number, leadingMargin: number, trailingMargin: number) => {
+			const maxInset = Math.max(0, (end - start) / 2 - 0.5);
+			const leading = Math.min(Math.max(0, leadingMargin), maxInset);
+			const trailing = Math.min(Math.max(0, trailingMargin), maxInset);
+			return [start + leading, Math.max(start + 1, end - trailing)] as const;
+		};
+		const nearestRegion = <T extends { start: number; end: number }>(value: number, regions: T[]): T => {
+			const inside = regions.find(region => value >= region.start && value <= region.end);
+			if (inside) return inside;
+			return regions.reduce((nearest, region) => {
+				const distance = value < region.start ? region.start - value : value - region.end;
+				const nearestDistance = value < nearest.start ? nearest.start - value : value - nearest.end;
+				return distance < nearestDistance ? region : nearest;
+			});
+		};
+		const warnings: string[] = [];
+		let blocked = false;
+		const visit = (object: any) => {
+			if (!object || object === workarea || object.id === 'workarea') return;
+			if (typeof object.getObjects === 'function') {
+				object.getObjects().forEach(visit);
+				return;
+			}
+			const type = String(object.type || '').toLowerCase();
+			if (!(type === 'text' || type === 'i-text' || type === 'textbox' || object.superType === 'text')) return;
+			if (!object.getCenterPoint?.()) return;
+			// Apply persisted center markers before measuring the text bounds.
+			if (object.get('horizontalCentered') === true) this.alignmentHandler.centerObjectInPrintRegion(object, 'horizontal');
+			if (object.get('verticalCentered') === true) this.alignmentHandler.centerObjectInPrintRegion(object, 'vertical');
+			const center = object.getCenterPoint();
+			const face = nearestRegion(center.x - origin.x, horizontalFaces);
+			const row = nearestRegion(center.y - origin.y, horizontalRows);
+			const safe = face.safe;
+			const [safeLeft, safeRight] = safeBounds(
+				face.start,
+				face.end,
+				safeDistancePixels(safe.left) * scaleX,
+				safeDistancePixels(safe.right) * scaleX,
+			);
+			const [safeTop, safeBottom] = safeBounds(
+				row.start,
+				row.end,
+				safeDistancePixels(safe.top) * scaleY,
+				safeDistancePixels(safe.bottom) * scaleY,
+			);
+			const originalSize = Number(object.fontSize || 0);
+			if (!(originalSize > 0)) return;
+			let rect = object.getBoundingRect?.();
+			const isOverflowing = (value: any) => Boolean(value && (
+				value.left < origin.x + safeLeft - 0.01
+				|| value.left + value.width > origin.x + safeRight + 0.01
+				|| value.top < origin.y + safeTop - 0.01
+				|| value.top + value.height > origin.y + safeBottom + 0.01
+			));
+			// Font metrics can change non-linearly after a size adjustment. Reduce by
+			// 0.5 CSS pixels per attempt and re-measure, avoiding a large proportional
+			// jump that can make the text unnecessarily small.
+			while (isOverflowing(rect)) {
+				const current = Number(object.fontSize || 1);
+				if (current <= 1) break;
+				const next = Math.max(1, current - 0.5);
+				if (!(next < current)) break;
+				object.set('fontSize', next);
+				object.initDimensions?.();
+				object.setCoords?.();
+				rect = object.getBoundingRect?.();
+			}
+			// Recenter after fitting because the measured text bounds changed.
+			if (object.get('horizontalCentered') === true) this.alignmentHandler.centerObjectInPrintRegion(object, 'horizontal');
+			if (object.get('verticalCentered') === true) this.alignmentHandler.centerObjectInPrintRegion(object, 'vertical');
+			rect = object.getBoundingRect?.();
+			const finalSize = Number(object.fontSize || originalSize);
+			const remainsOutside = isOverflowing(rect);
+			if (remainsOutside) blocked = true;
+			if (finalSize < originalSize - 0.01 || remainsOutside) {
+				const label = String(object.name || object.id || '未命名图层');
+				warnings.push(`图层“${label}”超出${row.name}${face.name}安全区域${finalSize < originalSize - 0.01 ? `，字号已从 ${originalSize.toFixed(2)} 缩小至 ${finalSize.toFixed(2)}` : ''}${remainsOutside ? '，缩小至最小可用字号后仍有超出，已阻止导出' : ''}`);
+			}
+		};
+		this.canvas.getObjects().forEach(visit);
+		this.canvas.requestRenderAll();
+		// Serialize only after every text object has reached its final size. This
+		// makes the adjusted fontSize part of exported/saved layer JSON instead of
+		// limiting the change to the pixels generated during this export.
+		return { warnings, blocked, objects: this.exportJSON() };
+	};
+
+	/**
 	 * Active selection to group
 	 * @returns
 	 */
@@ -1834,6 +1997,9 @@ class Handler implements HandlerOptions {
 	 * @param {string} [option={ name: 'New Image', format: 'png', quality: 1 }]
 	 */
 	public saveCanvasImage = (option = { name: 'New Image', format: 'png', quality: 1 }) => {
+		const exportCheck = this.prepareTextLayersForExport();
+		if (exportCheck.warnings.length) this.onExportWarning?.(exportCheck.warnings);
+		if (exportCheck.blocked) return;
 		// The editor uses 96 px/in for its on-screen coordinate system. Render
 		// the cropped workarea at the production resolution without adding the
 		// browser device-pixel ratio a second time.
@@ -1876,6 +2042,9 @@ class Handler implements HandlerOptions {
 	/** Save the workarea as a CorelDRAW-compatible SVG with editable text. */
 	public saveCanvasSVG(option = { name: 'New Image' }) {
 		if (!this.workarea) return;
+		const exportCheck = this.prepareTextLayersForExport();
+		if (exportCheck.warnings.length) this.onExportWarning?.(exportCheck.warnings);
+		if (exportCheck.blocked) return;
 		const bounds = this.workarea.getBoundingRect();
 		const width = bounds.width;
 		const height = bounds.height;
@@ -1941,6 +2110,9 @@ class Handler implements HandlerOptions {
 	/** Save the workarea with text converted to paths by text-to-svg. */
 	public async saveCanvasTextToSVG(option = { name: 'New Image' }) {
 		if (!this.workarea) return;
+		const exportCheck = this.prepareTextLayersForExport();
+		if (exportCheck.warnings.length) this.onExportWarning?.(exportCheck.warnings);
+		if (exportCheck.blocked) return;
 		const bounds = this.workarea.getBoundingRect();
 		const width = bounds.width;
 		const height = bounds.height;

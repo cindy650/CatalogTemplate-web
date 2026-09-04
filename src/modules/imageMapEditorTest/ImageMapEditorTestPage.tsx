@@ -7,16 +7,18 @@ import type {
   ImageMapSizeSchemeValue
 } from '../../image-map-editor/editor-entry';
 import { browserAlbumApi } from '../../api';
-import type { CatalogSizeTemplate, CatalogSizeTemplatePayload, ProductCategory, Shop } from '@shared/domain';
+import type { CatalogSizeTemplate, CatalogSizeTemplatePayload, Shop } from '@shared/domain';
 import {
   createFontLayout,
   deleteFontLayout,
   applyTextFont,
   loadFontLayoutCategories,
+  loadFontLayoutProducts,
   loadFontLayouts,
   loadFontLayoutSize,
   loadFontLayoutSizeOptions,
   loadTextFonts,
+  loadTextGenerationRules,
   saveFontLayout,
   syncFontLayoutSizeOptions,
   updateFontLayout
@@ -25,18 +27,24 @@ import {
 interface ImageMapEditorTestPageProps {
   shops: Shop[];
   template?: CatalogSizeTemplate;
-  /** Product-provided defaults are used only while creating a new template. */
-  productDefaults?: ProductCategory['commonSpecValues'];
   initialShopId?: number;
   initialProductId?: number;
+  initialSizeSchemes?: Partial<ImageMapSizeSchemeValue>[];
+  productSafeDistances?: Pick<CatalogSizeTemplate, 'backCoverSafeDistance' | 'coverSafeDistance' | 'spineSafeDistance'>;
   onExit?(): void;
 }
 
 type PersistMode = 'auto' | 'fields' | 'size-schemes';
 
-function templateSizeSchemes(template?: CatalogSizeTemplate): ImageMapSizeSchemeValue[] | undefined {
+function templateSizeSchemes(
+  template?: CatalogSizeTemplate,
+  productSafeDistances?: ImageMapEditorTestPageProps['productSafeDistances'],
+): ImageMapSizeSchemeValue[] | undefined {
   if (!template) return undefined;
-  return template.sizeOptions.map((option) => ({
+  return template.sizeOptions.map((option) => {
+    const workarea = option.layers?.objects.find((object) => object.id === 'workarea');
+    const separateBleed = workarea?.separateBleed === true;
+    return ({
     id: option.id,
     idIsPersisted: Boolean(option.id),
     label: option.label,
@@ -46,13 +54,21 @@ function templateSizeSchemes(template?: CatalogSizeTemplate): ImageMapSizeScheme
     sideWidth: option.fields.single_side_width > 0 ? option.fields.single_side_width : 9,
     sideHeight: option.fields.single_side_height > 0 ? option.fields.single_side_height : 6,
     bleed: option.fields.bleed,
+    separateBleed,
+    horizontalBleed: separateBleed ? Number(workarea?.horizontalBleed ?? option.fields.bleed) : option.fields.bleed,
+    verticalBleed: separateBleed ? Number(workarea?.verticalBleed ?? option.fields.bleed) : option.fields.bleed,
+		canvasRowGap: Number(workarea?.canvasRowGap ?? 0),
     spineWidthMode: template.spineWidthBasis === 1 ? 'by_page_count' : 'fixed',
     spineWidth: option.fields.spine_width,
     minSpineWidth: template.minSpineWidth,
     maxSpineWidth: template.maxSpineWidth,
     spineBleed: option.fields.spine_bleed,
+    backCoverSafeDistance: productSafeDistances?.backCoverSafeDistance ?? template.backCoverSafeDistance,
+    coverSafeDistance: productSafeDistances?.coverSafeDistance ?? template.coverSafeDistance,
+    spineSafeDistance: productSafeDistances?.spineSafeDistance ?? template.spineSafeDistance,
     paperThickness: template.paperThicknessMm ?? 0
-  }));
+    });
+  });
 }
 
 function editorTemplatePayload(
@@ -60,7 +76,8 @@ function editorTemplatePayload(
   initialProductId: number | undefined,
   basicInfo: ImageMapBasicInfoValue,
   sizeSchemes: ImageMapSizeSchemeValue[],
-  activeSizeSchemeId: string
+  activeSizeSchemeId: string,
+  currentLayers?: ImageMapFontLayoutLayerData
 ): CatalogSizeTemplatePayload {
   const activeSizeScheme = sizeSchemes.find((item) => item.id === activeSizeSchemeId) ?? sizeSchemes[0];
   return {
@@ -74,23 +91,31 @@ function editorTemplatePayload(
     maxSpineWidth: activeSizeScheme?.maxSpineWidth ?? template?.maxSpineWidth ?? 0.7,
     paperThicknessMm: activeSizeScheme?.paperThickness ?? template?.paperThicknessMm ?? 0,
     spineWidthBasis: activeSizeScheme?.spineWidthMode === 'by_page_count' ? 1 : 0,
-    coverSafeDistance: template?.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+    backCoverSafeDistance: activeSizeScheme?.backCoverSafeDistance ?? template?.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+    coverSafeDistance: activeSizeScheme?.coverSafeDistance ?? template?.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+    spineSafeDistance: activeSizeScheme?.spineSafeDistance ?? template?.spineSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
     selectedSizeOptionId: activeSizeScheme?.id ?? template?.selectedSizeOptionId ?? '',
     displayUnit: activeSizeScheme?.unit ?? template?.displayUnit ?? 'in',
     pageCount: activeSizeScheme?.pageCount ?? template?.pageCount ?? 50,
     pageCountOptions: activeSizeScheme?.pageCountOptions ?? template?.pageCountOptions ?? [50, 100],
-    sizeOptions: sizeSchemes.map((scheme) => ({
-      id: scheme.id,
-      label: scheme.label,
-      fields: {
-        size_unit: scheme.unit,
-        single_side_width: scheme.sideWidth,
-        single_side_height: scheme.sideHeight,
-        bleed: scheme.bleed,
-        spine_width: scheme.spineWidth,
-        spine_bleed: scheme.spineBleed
-      }
-    })),
+    sizeOptions: sizeSchemes.map((scheme) => {
+      const existing = template?.sizeOptions.find((option) => option.id === scheme.id);
+      return {
+        id: scheme.id,
+        label: scheme.label,
+        fields: {
+          size_unit: scheme.unit,
+          single_side_width: scheme.sideWidth,
+          single_side_height: scheme.sideHeight,
+          bleed: scheme.bleed,
+          spine_width: scheme.spineWidth,
+          spine_bleed: scheme.spineBleed
+        },
+        ...(scheme.id === activeSizeSchemeId && currentLayers !== undefined
+          ? { layers: currentLayers }
+          : existing?.layers !== undefined ? { layers: existing.layers } : {})
+      };
+    }),
     sizeTemplateInfo: template?.sizeTemplateInfo ?? [],
     fontLayouts: template?.fontLayouts ?? []
   };
@@ -117,7 +142,7 @@ function templateFieldsChanged(
   return JSON.stringify(comparable(next)) !== JSON.stringify(comparable(previous));
 }
 
-export default function ImageMapEditorTestPage({ shops, template, productDefaults, initialShopId, initialProductId, onExit }: ImageMapEditorTestPageProps) {
+export default function ImageMapEditorTestPage({ shops, template, initialShopId, initialProductId, initialSizeSchemes, productSafeDistances, onExit }: ImageMapEditorTestPageProps) {
   const { message } = AntdApp.useApp();
   const [detail, setDetail] = useState<CatalogSizeTemplate | undefined>(template);
   const [loading, setLoading] = useState(Boolean(template));
@@ -128,7 +153,7 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
     shopId: template?.shopId ?? initialShopId,
     templateName: template?.name ?? ''
   });
-  const sizeSchemesRef = useRef<ImageMapSizeSchemeValue[]>(templateSizeSchemes(template) ?? []);
+  const sizeSchemesRef = useRef<ImageMapSizeSchemeValue[]>((templateSizeSchemes(template, productSafeDistances) ?? initialSizeSchemes ?? []) as ImageMapSizeSchemeValue[]);
   const activeSizeSchemeIdRef = useRef(template?.selectedSizeOptionId ?? sizeSchemesRef.current[0]?.id ?? '');
   const basicInfoSaveTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -145,7 +170,7 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
     setLoadError('');
     void browserAlbumApi.catalogSizeTemplates.get(template.id).then((nextDetail) => {
       if (cancelled) return;
-      const nextSizeSchemes = templateSizeSchemes(nextDetail) ?? [];
+      const nextSizeSchemes = templateSizeSchemes(nextDetail, productSafeDistances) ?? [];
       detailRef.current = nextDetail;
       basicInfoRef.current = { shopId: nextDetail.shopId, templateName: nextDetail.name };
       sizeSchemesRef.current = nextSizeSchemes;
@@ -159,7 +184,7 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [reloadVersion, template]);
+  }, [productSafeDistances, reloadVersion, template]);
 
   useEffect(() => () => {
     if (basicInfoSaveTimerRef.current) clearTimeout(basicInfoSaveTimerRef.current);
@@ -170,7 +195,6 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
     sizeSchemes: ImageMapSizeSchemeValue[],
     activeSizeSchemeId: string,
     currentLayers?: ImageMapFontLayoutLayerData,
-    fontLayoutId?: number,
     createIfMissing = false,
     mode: PersistMode = 'auto'
   ) => {
@@ -187,7 +211,8 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
         initialProductId,
         basicInfo,
         sizeSchemes,
-        activeSizeSchemeId
+        activeSizeSchemeId,
+        currentLayers
       );
       if (!currentDetail) {
         if (!Number.isFinite(Number(payload.productId)) || Number(payload.productId) <= 0) {
@@ -198,16 +223,6 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
         basicInfoRef.current = { shopId: created.shopId, templateName: created.name };
         sizeSchemesRef.current = templateSizeSchemes(created) ?? sizeSchemes;
         activeSizeSchemeIdRef.current = created.selectedSizeOptionId || activeSizeSchemeId;
-        if (fontLayoutId !== undefined && currentLayers && activeSizeSchemeId) {
-          await syncFontLayoutSizeOptions(fontLayoutId, created.id, [{
-            sizeOptionId: activeSizeSchemeId,
-            layers: currentLayers
-          }]);
-          detailRef.current = {
-            ...created,
-            selectedFontLayoutId: fontLayoutId
-          };
-        }
         setDetail(detailRef.current ?? created);
         return;
       }
@@ -220,12 +235,6 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
           payload
         );
       }
-      if (fontLayoutId !== undefined && currentLayers && activeSizeSchemeId) {
-        await syncFontLayoutSizeOptions(fontLayoutId, currentDetail.id, [{
-          sizeOptionId: activeSizeSchemeId,
-          layers: currentLayers
-        }]);
-      }
       detailRef.current = {
         ...(detailRef.current ?? currentDetail),
         shopId: payload.shopId,
@@ -235,39 +244,25 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
         maxSpineWidth: payload.maxSpineWidth,
         paperThicknessMm: payload.paperThicknessMm,
         spineWidthBasis: payload.spineWidthBasis,
+        backCoverSafeDistance: payload.backCoverSafeDistance,
+        coverSafeDistance: payload.coverSafeDistance,
+        spineSafeDistance: payload.spineSafeDistance,
         selectedSizeOptionId: payload.selectedSizeOptionId,
         displayUnit: payload.displayUnit,
         pageCount: payload.pageCount,
         pageCountOptions: payload.pageCountOptions,
         sizeOptions: payload.sizeOptions,
-        sizeTemplateInfo: payload.sizeTemplateInfo
+        sizeTemplateInfo: payload.sizeTemplateInfo,
       };
     });
     saveQueueRef.current = saveTask.then(() => undefined, () => undefined);
     return saveTask;
   }, [initialProductId]);
 
-  const initialSizeSchemes = useMemo(() => templateSizeSchemes(detail), [detail]);
-  const defaultSizeSchemes = useMemo(() => {
-    if (template || !productDefaults?.length) return undefined;
-    return productDefaults.map((specification) => ({
-      id: specification.id.trim() || specification.label.trim(),
-      idIsPersisted: Boolean(specification.id.trim()),
-      label: specification.label.trim() || specification.id.trim(),
-      unit: specification.unit,
-      pageCount: specification.pageCount,
-      pageCountOptions: specification.pageCountOptions,
-      sideWidth: specification.sideWidth,
-      sideHeight: specification.sideHeight,
-      bleed: specification.bleed,
-      spineWidthMode: specification.spineWidthMode,
-      spineWidth: specification.spineWidth,
-      minSpineWidth: specification.minSpineWidth,
-      maxSpineWidth: specification.maxSpineWidth,
-      spineBleed: specification.spineBleed,
-      paperThickness: specification.paperThickness,
-    }));
-  }, [productDefaults, template]);
+  const editorInitialSizeSchemes = useMemo(
+    () => templateSizeSchemes(detail, productSafeDistances) ?? initialSizeSchemes,
+    [detail, initialSizeSchemes, productSafeDistances],
+  );
 
   if (loading) {
     return <div className="image-map-editor-test-page template-library-editor-loading"><Spin size="large" /></div>;
@@ -295,7 +290,8 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
         initialBasicInfo={detail
           ? { shopId: detail.shopId, templateName: detail.name }
           : { shopId: initialShopId, templateName: '' }}
-        initialSizeSchemes={initialSizeSchemes ?? defaultSizeSchemes}
+        initialProductId={detail?.productId ?? initialProductId}
+        initialSizeSchemes={editorInitialSizeSchemes}
         initialActiveSizeSchemeId={detail?.selectedSizeOptionId}
         selectedFontLayoutId={detail?.selectedFontLayoutId}
         onExit={onExit}
@@ -306,11 +302,20 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
         createFontLayout={createFontLayout}
         deleteFontLayout={deleteFontLayout}
         loadFontLayoutCategories={loadFontLayoutCategories}
-        loadFontLayouts={(shopId) => loadFontLayouts(shopId, detail?.productId ?? initialProductId)}
+        loadFontLayoutProducts={loadFontLayoutProducts}
+        loadFontLayouts={(shopId, productId) => loadFontLayouts(shopId, productId === undefined ? (detail?.productId ?? initialProductId) : Number(productId))}
         loadFontLayoutSizeOptions={loadFontLayoutSizeOptions}
         loadFontLayoutSize={loadFontLayoutSize}
+        loadSizeSchemeLayers={async (sizeOptionId) => {
+          const current = detailRef.current;
+          if (!current?.id) return undefined;
+          const latest = await browserAlbumApi.catalogSizeTemplates.get(current.id);
+          detailRef.current = latest;
+          return latest.sizeOptions.find((option) => option.id === sizeOptionId)?.layers;
+        }}
         applyTextFont={applyTextFont}
         loadTextFonts={loadTextFonts}
+        loadTextGenerationRules={loadTextGenerationRules}
         saveFontLayout={saveFontLayout}
         sizeTemplateId={detail?.id}
         syncFontLayoutSizeOptions={syncFontLayoutSizeOptions}
@@ -323,7 +328,6 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
               basicInfoRef.current,
               sizeSchemesRef.current,
               activeSizeSchemeIdRef.current,
-              undefined,
               undefined,
               false,
               'fields'
@@ -343,7 +347,6 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
             document.sizeSchemes,
             document.activeSizeSchemeId,
             document.layers,
-            detailRef.current?.selectedFontLayoutId,
             true,
             'auto'
           );
@@ -357,7 +360,8 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
 						initialProductId,
 						document.basicInfo,
 						document.sizeSchemes,
-						document.activeSizeSchemeId
+						document.activeSizeSchemeId,
+            document.layers
 					),
 					previewImage
 				}
@@ -368,11 +372,11 @@ export default function ImageMapEditorTestPage({ shops, template, productDefault
         }}
         saveSuccessMessage="尺寸模板已保存"
 		saveLocation="basicInfo"
-        onSaveSizeSchemes={async (sizeSchemes, activeSizeSchemeId, currentLayers, fontLayoutId) => {
+        onSaveSizeSchemes={async (sizeSchemes, activeSizeSchemeId, currentLayers) => {
           if (basicInfoSaveTimerRef.current) clearTimeout(basicInfoSaveTimerRef.current);
           sizeSchemesRef.current = sizeSchemes;
           activeSizeSchemeIdRef.current = activeSizeSchemeId;
-          await persistEditorFields(basicInfoRef.current, sizeSchemes, activeSizeSchemeId, currentLayers, fontLayoutId, true, 'size-schemes');
+          await persistEditorFields(basicInfoRef.current, sizeSchemes, activeSizeSchemeId, currentLayers, true, 'size-schemes');
         }}
       />
     </div>

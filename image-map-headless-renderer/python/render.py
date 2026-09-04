@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from copy import deepcopy
 import json
 import mimetypes
 from pathlib import Path
@@ -21,10 +22,12 @@ def render_json(
     png_path: Path | None,
     svg_path: Path | None,
     text_to_svg_path: Path | None,
+    output_json_path: Path | None,
     dpi: float = 300,
 ):
     document = json.loads(input_path.read_text(encoding="utf-8"))
-    embed_local_resources(document, input_path.parent)
+    render_document = deepcopy(document)
+    embed_local_resources(render_document, input_path.parent)
     formats = [
         name
         for name, path_value in (
@@ -43,7 +46,7 @@ def render_json(
             page.wait_for_function("Boolean(globalThis.ImageMapHeadlessRenderer)")
             result = page.evaluate(
                 "payload => globalThis.ImageMapHeadlessRenderer.render(payload)",
-                {"json": document, "dpi": dpi, "quality": 0.95, "formats": formats},
+                {"json": render_document, "dpi": dpi, "quality": 0.95, "formats": formats},
             )
         finally:
             browser.close()
@@ -54,7 +57,54 @@ def render_json(
         write_svg(svg_path, result["images"]["svg"])
     if text_to_svg_path:
         write_svg(text_to_svg_path, result["images"]["textToSvg"])
-    return {key: value for key, value in result.items() if key != "images"}
+    apply_rendered_font_sizes(document, result.get("json"))
+    if output_json_path:
+        output_json_path.parent.mkdir(parents=True, exist_ok=True)
+        output_json_path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {key: value for key, value in result.items() if key not in ("images", "json")}
+
+
+def apply_rendered_font_sizes(document, rendered_document):
+    """Copy only final font sizes back, keeping original URLs and input fields."""
+    original_objects = extract_objects(document)
+    rendered_objects = extract_objects(rendered_document)
+    apply_object_font_sizes(original_objects, rendered_objects)
+
+
+def extract_objects(document):
+    if isinstance(document, list):
+        return document
+    if not isinstance(document, dict):
+        return []
+    if isinstance(document.get("objects"), list):
+        return document["objects"]
+    layers = document.get("layers")
+    if isinstance(layers, dict) and isinstance(layers.get("objects"), list):
+        return layers["objects"]
+    return []
+
+
+def apply_object_font_sizes(original_objects, rendered_objects):
+    rendered_by_id = {
+        item.get("id"): item
+        for item in rendered_objects
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    for index, original in enumerate(original_objects):
+        if not isinstance(original, dict):
+            continue
+        rendered = rendered_by_id.get(original.get("id"))
+        if rendered is None and index < len(rendered_objects):
+            candidate = rendered_objects[index]
+            rendered = candidate if isinstance(candidate, dict) else None
+        if not rendered:
+            continue
+        if "fontSize" in rendered:
+            original["fontSize"] = rendered["fontSize"]
+        apply_object_font_sizes(
+            original.get("objects") if isinstance(original.get("objects"), list) else [],
+            rendered.get("objects") if isinstance(rendered.get("objects"), list) else [],
+        )
 
 
 def launch_browser(playwright):
@@ -129,15 +179,17 @@ def main():
     parser.add_argument("--png", type=Path)
     parser.add_argument("--svg", type=Path)
     parser.add_argument("--text-to-svg", type=Path)
+    parser.add_argument("--output-json", type=Path, help="Write JSON with fitted text fontSize values")
     parser.add_argument("--dpi", type=float, default=300)
     args = parser.parse_args()
     input_path = args.input.resolve()
-    output_flags = args.jpg or args.png or args.svg or args.text_to_svg
+    output_flags = args.jpg or args.png or args.svg or args.text_to_svg or args.output_json
     jpg_path = args.jpg.resolve() if args.jpg else (input_path.with_suffix(".jpg") if not output_flags else None)
     png_path = args.png.resolve() if args.png else (input_path.with_suffix(".png") if not output_flags else None)
     svg_path = args.svg.resolve() if args.svg else (input_path.with_suffix(".svg") if not output_flags else None)
     text_to_svg_path = args.text_to_svg.resolve() if args.text_to_svg else (input_path.with_suffix(".text-to-svg.svg") if not output_flags else None)
-    result = render_json(input_path, jpg_path, png_path, svg_path, text_to_svg_path, args.dpi)
+    output_json_path = args.output_json.resolve() if args.output_json else None
+    result = render_json(input_path, jpg_path, png_path, svg_path, text_to_svg_path, output_json_path, args.dpi)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

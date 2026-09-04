@@ -3,6 +3,7 @@ import React from 'react';
 import type { CanvasInstance } from '../../canvas';
 import { EditorPanelHeader } from '../../components/editor';
 import type { ImageMapSizeSchemeValue } from './ImageMapSizeScheme';
+import InnerPageMapProperties from './properties/InnerPageMapProperties';
 import MapProperties from './properties/MapProperties';
 
 interface ImageMapCanvasSettingsProps {
@@ -14,6 +15,7 @@ interface ImageMapCanvasSettingsProps {
 	onDeleteSizeScheme: (id: string) => void;
 	onSaveSizeScheme: (values: Omit<ImageMapSizeSchemeValue, 'id'>) => void;
 	onSelectSizeScheme: (id: string) => void;
+	innerPageMode?: boolean;
 }
 
 const ImageMapCanvasSettings = ({
@@ -25,20 +27,33 @@ const ImageMapCanvasSettings = ({
 	onDeleteSizeScheme,
 	onSaveSizeScheme,
 	onSelectSizeScheme,
+	innerPageMode,
 }: ImageMapCanvasSettingsProps) => (
 	<section className="rde-imagemap-canvas-settings">
 		<EditorPanelHeader eyebrow="规格" title="尺寸方案" />
 		<div className="rde-imagemap-canvas-settings-content">
-			<MapProperties
-				canvasRef={canvasRef ?? undefined}
-				onChange={onChange}
-				sizeSchemes={sizeSchemes}
-				activeSizeSchemeId={activeSizeSchemeId}
-				onAddSizeScheme={onAddSizeScheme}
-				onDeleteSizeScheme={onDeleteSizeScheme}
-				onSaveSizeScheme={onSaveSizeScheme}
-				onSelectSizeScheme={onSelectSizeScheme}
-			/>
+			{innerPageMode ? (
+				<InnerPageMapProperties
+					canvasRef={canvasRef ?? undefined}
+					onChange={onChange}
+					sizeSchemes={sizeSchemes}
+					activeSizeSchemeId={activeSizeSchemeId}
+					onAddSizeScheme={onAddSizeScheme}
+					onSaveSizeScheme={onSaveSizeScheme}
+					onSelectSizeScheme={onSelectSizeScheme}
+				/>
+			) : (
+				<MapProperties
+					canvasRef={canvasRef ?? undefined}
+					onChange={onChange}
+					sizeSchemes={sizeSchemes}
+					activeSizeSchemeId={activeSizeSchemeId}
+					onAddSizeScheme={onAddSizeScheme}
+					onDeleteSizeScheme={onDeleteSizeScheme}
+					onSaveSizeScheme={onSaveSizeScheme}
+					onSelectSizeScheme={onSelectSizeScheme}
+				/>
+			)}
 		</div>
 	</section>
 );

@@ -25,4 +25,11 @@ assert.equal('file' in persisted, false, 'file metadata must not be persisted wi
 const workarea = serializeImageLayer({ id: 'workarea', type: 'Image', src: 'data:image/png;base64,AAAA' });
 assert.equal('src' in workarea, false, 'workarea source is editor-only');
 
+const innerPageWorkarea = serializeImageLayer(
+  { id: 'workarea', type: 'Image', src: 'data:image/png;base64,AAAA', file: uploadFile },
+  { preserveWorkareaSource: true },
+);
+assert.equal(innerPageWorkarea.src, 'data:image/png;base64,AAAA', 'inner-page workarea source must be persisted');
+assert.equal('file' in innerPageWorkarea, false, 'inner-page workarea must persist src instead of file metadata');
+
 console.log('image-layer persistence checks passed');

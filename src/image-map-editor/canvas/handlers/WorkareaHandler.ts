@@ -1,10 +1,14 @@
 import * as fabric from 'fabric';
 
 import { Handler } from '.';
-import { FabricImage, PrintGuide, PrintGuideKind, PrintUnit, WorkareaLayout, WorkareaObject } from '../models';
+import { FabricImage, PrintGuide, PrintGuideKind, PrintUnit, WorkareaLayout, WorkareaObject, WorkareaSafeDistance } from '../models';
 import { VideoObject } from '../objects/Video';
+import { getImageSource } from '../utils/imageSource';
 
 class WorkareaHandler {
+	/** Visual separation between two canvas rows, measured in editor pixels. */
+	private static readonly canvasRowGap = 0;
+
 	handler: Handler;
 	private printGuideContext: CanvasRenderingContext2D;
 
@@ -61,9 +65,54 @@ class WorkareaHandler {
 		sideWidth: this.toPositiveNumber(values.sideWidth ?? this.handler.workarea?.sideWidth, 9),
 		sideHeight: this.toPositiveNumber(values.sideHeight ?? this.handler.workarea?.sideHeight, 6),
 		bleed: this.toPositiveNumber(values.bleed ?? this.handler.workarea?.bleed, 0.79),
-		spineWidth: this.toPositiveNumber(values.spineWidth ?? this.handler.workarea?.spineWidth, 0.55),
-		spineBleed: this.toPositiveNumber(values.spineBleed ?? this.handler.workarea?.spineBleed, 0.55),
+		separateBleed: (values.separateBleed ?? this.handler.workarea?.separateBleed) === true,
+		horizontalBleed: this.toPositiveNumber(
+			values.horizontalBleed ?? this.handler.workarea?.horizontalBleed ?? values.bleed ?? this.handler.workarea?.bleed,
+			0.79,
+		),
+		verticalBleed: this.toPositiveNumber(
+			values.verticalBleed ?? this.handler.workarea?.verticalBleed ?? values.bleed ?? this.handler.workarea?.bleed,
+			0.79,
+		),
+		canvasRowGap: this.toPositiveNumber(
+			values.canvasRowGap ?? this.handler.workarea?.canvasRowGap,
+			WorkareaHandler.canvasRowGap,
+		),
+		// Two-row layouts are front/back rows without a spine. Keep the spine
+		// fields in the JSON for single-row templates, but never reserve that
+		// width in a two-row canvas.
+		spineWidth: (values.canvasRows ?? this.handler.workarea?.canvasRows) === 2
+			? 0
+			: this.toPositiveNumber(values.spineWidth ?? this.handler.workarea?.spineWidth, 0.55),
+		spineBleed: (values.canvasRows ?? this.handler.workarea?.canvasRows) === 2
+			? 0
+			: this.toPositiveNumber(values.spineBleed ?? this.handler.workarea?.spineBleed, 0.55),
+		canvasRows: (values.canvasRows ?? this.handler.workarea?.canvasRows) === 2 ? 2 : 1,
+		backCoverSafeDistance: this.getSafeDistance(values.backCoverSafeDistance ?? this.handler.workarea?.backCoverSafeDistance),
+		coverSafeDistance: this.getSafeDistance(values.coverSafeDistance ?? this.handler.workarea?.coverSafeDistance),
+		spineSafeDistance: this.getSafeDistance(values.spineSafeDistance ?? this.handler.workarea?.spineSafeDistance),
 	});
+
+	private getSafeDistance = (value: unknown): WorkareaSafeDistance => {
+		const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+		return {
+			top: this.toPositiveNumber(source.top, 0),
+			right: this.toPositiveNumber(source.right, 0),
+			bottom: this.toPositiveNumber(source.bottom, 0),
+			left: this.toPositiveNumber(source.left, 0),
+		};
+	};
+
+	private safeDistancePixels = (value: number) => Math.max(0, Number(value) || 0) / 25.4 * 96;
+
+	private getCanvasRowGap = (canvasRows: number, configuredGap?: number) => (
+		canvasRows === 2 ? Math.max(0, Number(configuredGap ?? WorkareaHandler.canvasRowGap)) : 0
+	);
+
+	private getCanvasRowHeight = (height: number, canvasRows: number, configuredGap?: number) => {
+		const gap = this.getCanvasRowGap(canvasRows, configuredGap);
+		return Math.max(1, (height - gap * (canvasRows - 1)) / canvasRows);
+	};
 
 	private buildPrintGuides = (
 		width: number,
@@ -73,20 +122,31 @@ class WorkareaHandler {
 		const printValues = this.getPrintValues(values);
 		const factor = this.pixelsPerUnit[printValues.unit] || this.pixelsPerUnit.mm;
 		const sideWidth = printValues.sideWidth * factor;
-		const bleed = printValues.bleed * factor;
+		const horizontalBleed = (printValues.separateBleed ? printValues.horizontalBleed : printValues.bleed) * factor;
+		const verticalBleed = (printValues.separateBleed ? printValues.verticalBleed : printValues.bleed) * factor;
 		const spineWidth = printValues.spineWidth * factor;
 		const spineBleed = printValues.spineBleed * factor;
-		const verticalPositions = [
-			0,
-			bleed,
-			bleed + sideWidth,
-			bleed + sideWidth + spineBleed,
-			bleed + sideWidth + spineBleed + spineWidth,
-			bleed + sideWidth + spineBleed + spineWidth + spineBleed,
-			width - bleed,
-			width,
-		];
-		const horizontalPositions = [0, bleed, height - bleed, height];
+		const verticalPositions = printValues.canvasRows === 2
+			? [
+				0,
+				horizontalBleed,
+				horizontalBleed + sideWidth,
+				width - horizontalBleed - sideWidth,
+				width - horizontalBleed,
+				width,
+			]
+			: [
+				0,
+				horizontalBleed,
+				horizontalBleed + sideWidth,
+				horizontalBleed + sideWidth + spineBleed,
+				horizontalBleed + sideWidth + spineBleed + spineWidth,
+				horizontalBleed + sideWidth + spineBleed + spineWidth + spineBleed,
+				width - horizontalBleed,
+				width,
+			];
+		const canvasRowGap = this.getCanvasRowGap(printValues.canvasRows, printValues.canvasRowGap);
+		const rowHeight = this.getCanvasRowHeight(height, printValues.canvasRows, printValues.canvasRowGap);
 		const guides: PrintGuide[] = [];
 		const add = (orientation: PrintGuide['orientation'], position: number, kind: PrintGuideKind) => {
 			if (position < 0 || position > (orientation === 'vertical' ? width : height)) return;
@@ -96,21 +156,52 @@ class WorkareaHandler {
 				guides.push({ orientation, position, kind });
 			}
 		};
-		// The workarea edge and the two spine-bleed edges are bleed guides.
 		// Content boundaries are solid; bleed boundaries are blue dashed lines.
-		add('vertical', verticalPositions[0], 'bleed');
-		add('vertical', verticalPositions[1], 'content');
-		add('vertical', verticalPositions[2], 'bleed');
-		add('vertical', verticalPositions[3], 'content');
-		add('vertical', verticalPositions[4], 'content');
-		add('vertical', verticalPositions[5], 'bleed');
-		add('vertical', verticalPositions[6], 'content');
-		add('vertical', verticalPositions[7], 'bleed');
-		add('horizontal', horizontalPositions[0], 'bleed');
-		add('horizontal', horizontalPositions[1], 'content');
-		add('horizontal', horizontalPositions[2], 'content');
-		add('horizontal', horizontalPositions[3], 'bleed');
+		if (printValues.canvasRows === 2) {
+			add('vertical', verticalPositions[0], 'bleed');
+			add('vertical', verticalPositions[1], 'content');
+			add('vertical', verticalPositions[2], 'content');
+			add('vertical', verticalPositions[3], 'content');
+			add('vertical', verticalPositions[4], 'content');
+			add('vertical', verticalPositions[5], 'bleed');
+		} else {
+			add('vertical', verticalPositions[0], 'bleed');
+			add('vertical', verticalPositions[1], 'content');
+			add('vertical', verticalPositions[2], 'bleed');
+			add('vertical', verticalPositions[3], 'content');
+			add('vertical', verticalPositions[4], 'content');
+			add('vertical', verticalPositions[5], 'bleed');
+			add('vertical', verticalPositions[6], 'content');
+			add('vertical', verticalPositions[7], 'bleed');
+		}
+		for (let row = 0; row < printValues.canvasRows; row += 1) {
+			const rowTop = row * (rowHeight + canvasRowGap);
+			const rowBottom = rowTop + rowHeight;
+			add('horizontal', rowTop, 'bleed');
+			add('horizontal', rowTop + verticalBleed, 'content');
+			add('horizontal', rowBottom - verticalBleed, 'content');
+			add('horizontal', rowBottom, 'bleed');
+		}
 		return guides;
+	};
+
+	public getPrintDimensionData = (values: Record<string, any>) => {
+		const printValues = this.getPrintValues(values);
+		const factor = this.pixelsPerUnit[printValues.unit] || this.pixelsPerUnit.mm;
+		const horizontalBleed = printValues.separateBleed ? printValues.horizontalBleed : printValues.bleed;
+		const verticalBleed = printValues.separateBleed ? printValues.verticalBleed : printValues.bleed;
+		const physicalWidth = printValues.canvasRows === 2
+			? printValues.sideWidth * 2 + horizontalBleed * 2
+			: printValues.sideWidth * 2 + horizontalBleed * 2 + printValues.spineBleed * 2 + printValues.spineWidth;
+		const width = Math.max(1, physicalWidth * factor);
+		const rowHeight = Math.max(1, (printValues.sideHeight + verticalBleed * 2) * factor);
+		const height = rowHeight * printValues.canvasRows + this.getCanvasRowGap(printValues.canvasRows, printValues.canvasRowGap);
+		return {
+			...printValues,
+			workareaWidth: width,
+			workareaHeight: height,
+			printGuides: this.buildPrintGuides(width, height, printValues),
+		};
 	};
 
 	/** Return guide positions in the rendered workarea coordinate system. */
@@ -135,7 +226,7 @@ class WorkareaHandler {
 
 	private afterPrintGuideRender = () => {
 		const workarea = this.handler.workarea;
-		if (!workarea || !workarea.printGuides?.length) return;
+		if (!workarea) return;
 		const origin = workarea.getPointByOrigin('left', 'top');
 		const { viewportTransform } = this.handler.canvas;
 		const zoom = this.handler.canvas.getZoom() || 1;
@@ -147,7 +238,7 @@ class WorkareaHandler {
 		ctx.lineWidth = 1 / zoom;
 		ctx.strokeStyle = '#1677ff';
 		ctx.setLineDash([6 / zoom, 4 / zoom]);
-		workarea.printGuides.forEach(guide => {
+		workarea.printGuides?.forEach(guide => {
 			ctx.beginPath();
 			ctx.setLineDash(guide.kind === 'content' ? [] : [6 / zoom, 4 / zoom]);
 			if (guide.orientation === 'vertical') {
@@ -166,7 +257,72 @@ class WorkareaHandler {
 			ctx.stroke();
 		});
 		ctx.setLineDash([]);
-		this.drawPrintDimensionLabels(ctx, origin, height, workarea, zoom);
+		if (workarea.printGuides?.length) this.drawPrintDimensionLabels(ctx, origin, height, workarea, zoom);
+		this.drawSafeDistanceGuides(ctx, origin, width, height, workarea, zoom);
+		ctx.restore();
+	};
+
+	/** Draw product safe distances as an editor-only red dashed overlay. */
+	private drawSafeDistanceGuides = (
+		ctx: CanvasRenderingContext2D,
+		origin: fabric.Point,
+		width: number,
+		height: number,
+		workarea: WorkareaObject,
+		zoom: number,
+	) => {
+		const values = this.getPrintValues(workarea);
+		const logicalWidth = Number(workarea.workareaWidth || workarea.width || width) || width;
+		const logicalHeight = Number(workarea.workareaHeight || workarea.height || height) || height;
+		const scaleX = width / logicalWidth;
+		const scaleY = height / logicalHeight;
+		const unitFactor = this.pixelsPerUnit[values.unit] || this.pixelsPerUnit.mm;
+		const horizontalBleed = (values.separateBleed ? values.horizontalBleed : values.bleed) * unitFactor;
+		const verticalBleed = (values.separateBleed ? values.verticalBleed : values.bleed) * unitFactor;
+		const sideWidth = values.sideWidth * unitFactor;
+		const spineWidth = values.spineWidth * unitFactor;
+		const spineBleed = values.spineBleed * unitFactor;
+		const rows = values.canvasRows;
+		const rowGap = this.getCanvasRowGap(rows, values.canvasRowGap);
+		const rowHeight = this.getCanvasRowHeight(logicalHeight, rows, values.canvasRowGap);
+		const faces = rows === 2
+			? [
+				{ start: horizontalBleed, end: horizontalBleed + sideWidth, safe: values.coverSafeDistance },
+				{ start: logicalWidth - horizontalBleed - sideWidth, end: logicalWidth - horizontalBleed, safe: values.backCoverSafeDistance },
+			]
+			: [
+				{ start: horizontalBleed, end: horizontalBleed + sideWidth, safe: values.coverSafeDistance },
+				{ start: horizontalBleed + sideWidth + spineBleed, end: horizontalBleed + sideWidth + spineBleed + spineWidth, safe: values.spineSafeDistance },
+				{ start: horizontalBleed + sideWidth + spineBleed + spineWidth + spineBleed, end: logicalWidth - horizontalBleed, safe: values.backCoverSafeDistance },
+			];
+		const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
+			ctx.moveTo(origin.x + x1, origin.y + y1);
+			ctx.lineTo(origin.x + x2, origin.y + y2);
+		};
+		ctx.save();
+		ctx.strokeStyle = '#ff4d4f';
+		ctx.lineWidth = 1.5 / zoom;
+		ctx.setLineDash([5 / zoom, 4 / zoom]);
+		ctx.beginPath();
+		for (let row = 0; row < rows; row += 1) {
+			const rowTop = row * (rowHeight + rowGap);
+			const rowBottom = rowTop + rowHeight;
+			faces.forEach(face => {
+				const safe = face.safe;
+				// Product safe distances are stored in millimetres. Convert once to
+				// CSS pixels; the face geometry above is already expressed in CSS
+				// pixels through the selected unit's factor.
+				const left = Math.min(face.end, face.start + this.safeDistancePixels(safe.left)) * scaleX;
+				const right = Math.max(face.start, face.end - this.safeDistancePixels(safe.right)) * scaleX;
+				const top = Math.min(rowBottom, rowTop + verticalBleed + this.safeDistancePixels(safe.top)) * scaleY;
+				const bottom = Math.max(rowTop, rowBottom - verticalBleed - this.safeDistancePixels(safe.bottom)) * scaleY;
+				drawLine(left, top, right, top);
+				drawLine(left, bottom, right, bottom);
+				drawLine(left, top, left, bottom);
+				drawLine(right, top, right, bottom);
+			});
+		}
+		ctx.stroke();
 		ctx.restore();
 	};
 
@@ -181,14 +337,15 @@ class WorkareaHandler {
 	) => {
 		const values = this.getPrintValues(workarea);
 		const factor = this.pixelsPerUnit[values.unit] || this.pixelsPerUnit.mm;
-		const bleed = values.bleed * factor;
+		const horizontalBleed = (values.separateBleed ? values.horizontalBleed : values.bleed) * factor;
 		const sideWidth = values.sideWidth * factor;
 		const spineBleed = values.spineBleed * factor;
 		const spineWidth = values.spineWidth * factor;
-		const sideStart = bleed;
+		const sideStart = horizontalBleed;
 		const sideEnd = sideStart + sideWidth;
 		const spineStart = sideEnd + spineBleed;
 		const spineEnd = spineStart + spineWidth;
+		const renderedWidth = workarea.width * workarea.scaleX;
 		const labelUnit = values.unit;
 		const fontSize = 12 / zoom;
 		const rowGap = 18 / zoom;
@@ -228,41 +385,43 @@ class WorkareaHandler {
 			ctx.fillText(text(label, value), labelX, labelY);
 		};
 
-		// The usable single-side span includes the adjacent spine bleed.
-		horizontalDimension('单面宽', values.sideWidth + values.spineBleed, sideStart, spineStart, 0);
-		horizontalDimension('出血', values.bleed, 0, bleed, 1);
-		horizontalDimension('背脊宽', values.spineWidth, spineStart, spineEnd, 0);
-		horizontalDimension('背脊出血', values.spineBleed, sideEnd, spineStart, 1);
-		horizontalDimension('背脊出血', values.spineBleed, spineEnd, spineEnd + spineBleed, 1);
+		if (values.canvasRows === 2) {
+			horizontalDimension('单面宽', values.sideWidth, sideStart, sideEnd, 0);
+			horizontalDimension('单面宽', values.sideWidth, renderedWidth - horizontalBleed - sideWidth, renderedWidth - horizontalBleed, 0);
+			horizontalDimension(values.separateBleed ? '左右出血' : '出血', values.separateBleed ? values.horizontalBleed : values.bleed, 0, horizontalBleed, 1);
+		} else {
+			// The usable single-side span includes the adjacent spine bleed.
+			horizontalDimension('单面宽', values.sideWidth + values.spineBleed, sideStart, spineStart, 0);
+			horizontalDimension(values.separateBleed ? '左右出血' : '出血', values.separateBleed ? values.horizontalBleed : values.bleed, 0, horizontalBleed, 1);
+			horizontalDimension('背脊宽', values.spineWidth, spineStart, spineEnd, 0);
+			horizontalDimension('背脊出血', values.spineBleed, sideEnd, spineStart, 1);
+			horizontalDimension('背脊出血', values.spineBleed, spineEnd, spineEnd + spineBleed, 1);
+		}
 
-		const heightLabelX = origin.x - 20 / zoom;
-		const heightLabelY = origin.y + height / 2;
-		ctx.save();
-		ctx.translate(heightLabelX, heightLabelY);
-		ctx.rotate(-Math.PI / 2);
-		const heightLabel = text('单面高', values.sideHeight);
-		ctx.strokeText(heightLabel, 0, 0);
-		ctx.fillText(heightLabel, 0, 0);
-		ctx.restore();
+		const canvasRowGap = this.getCanvasRowGap(values.canvasRows, values.canvasRowGap);
+		const rowHeight = this.getCanvasRowHeight(height, values.canvasRows, values.canvasRowGap);
+		for (let row = 0; row < values.canvasRows; row += 1) {
+			const heightLabelX = origin.x - 20 / zoom;
+			const heightLabelY = origin.y + row * (rowHeight + canvasRowGap) + rowHeight / 2;
+			ctx.save();
+			ctx.translate(heightLabelX, heightLabelY);
+			ctx.rotate(-Math.PI / 2);
+			const heightLabel = text('单面高', values.sideHeight);
+			ctx.strokeText(heightLabel, 0, 0);
+			ctx.fillText(heightLabel, 0, 0);
+			ctx.restore();
+		}
 		ctx.restore();
 	};
 
 	public setPrintDimensions = (values: Record<string, any>) => {
 		const workarea = this.handler.workarea;
-		const printValues = this.getPrintValues(values);
-		const factor = this.pixelsPerUnit[printValues.unit] || this.pixelsPerUnit.mm;
-		const width = Math.max(
-			1,
-			(printValues.sideWidth * 2 + printValues.bleed * 2 + printValues.spineBleed * 2 + printValues.spineWidth) *
-				factor,
-		);
-		const height = Math.max(1, (printValues.sideHeight + printValues.bleed * 2) * factor);
+		const dimensionData = this.getPrintDimensionData(values);
+		const width = dimensionData.workareaWidth;
+		const height = dimensionData.workareaHeight;
 		const element = workarea.getElement();
 		workarea.set({
-			...printValues,
-			workareaWidth: width,
-			workareaHeight: height,
-			printGuides: this.buildPrintGuides(width, height, printValues),
+			...dimensionData,
 		});
 		if (workarea.isElement && element?.width && element?.height) {
 			workarea.set({
@@ -277,6 +436,61 @@ class WorkareaHandler {
 		workarea.setCoords();
 		this.handler.canvas.centerObject(workarea);
 		// Render synchronously so each unit value edit is reflected immediately.
+		this.handler.canvas.renderAll();
+	};
+
+	/** Set a single-page canvas without applying cover/spine print geometry. */
+	public setInnerPageDimensions = (width: number, height: number) => {
+		const workarea = this.handler.workarea;
+		const nextWidth = Math.max(1, Number(width) || 1);
+		const nextHeight = Math.max(1, Number(height) || 1);
+		workarea.set({
+			width: nextWidth,
+			height: nextHeight,
+			workareaWidth: nextWidth,
+			workareaHeight: nextHeight,
+			scaleX: 1,
+			scaleY: 1,
+			canvasRows: 1,
+			printGuides: [],
+			innerPage: true,
+		});
+		workarea.setCoords();
+		this.handler.canvas.centerObject(workarea);
+		this.handler.canvas.renderAll();
+	};
+
+	/** Convert an inner-page physical size to the editor's 96 DPI canvas. */
+	public setInnerPageSize = (values: Record<string, any>) => {
+		const unit: PrintUnit = values.unit === 'cm' || values.unit === 'mm' ? values.unit : 'in';
+		const sideWidth = Math.max(1 / this.pixelsPerUnit[unit], Number(values.sideWidth) || 0);
+		const sideHeight = Math.max(1 / this.pixelsPerUnit[unit], Number(values.sideHeight) || 0);
+		const width = sideWidth * this.pixelsPerUnit[unit];
+		const height = sideHeight * this.pixelsPerUnit[unit];
+		const workarea = this.handler.workarea;
+		const element = workarea.getElement();
+		workarea.set({
+			workareaWidth: width,
+			workareaHeight: height,
+			unit,
+			sideWidth,
+			sideHeight,
+			canvasRows: 1,
+			printGuides: [],
+			innerPage: true,
+		});
+		if (workarea.isElement && element?.width && element?.height) {
+			workarea.set({
+				width: element.width,
+				height: element.height,
+				scaleX: width / element.width,
+				scaleY: height / element.height,
+			});
+		} else {
+			workarea.set({ width, height, scaleX: 1, scaleY: 1 });
+		}
+		workarea.setCoords();
+		this.handler.canvas.centerObject(workarea);
 		this.handler.canvas.renderAll();
 	};
 
@@ -460,6 +674,7 @@ class WorkareaHandler {
 				reader.onload = () => {
 					workarea.set({
 						file: source,
+						src: reader.result as string,
 					});
 					imageFromUrl(reader.result as string).then(resolve);
 				};
@@ -475,14 +690,15 @@ class WorkareaHandler {
 
 	/**
 	 * Set the image on Workarea
-	 * @param {string | File} source
+	 * @param {unknown} source
 	 * @param {boolean} [loaded=false]
 	 * @returns
 	 */
-	setImage = async (source: string | File, loaded = false) => {
+	setImage = async (source: unknown, loaded = false) => {
 		const { canvas, workarea, editable } = this.handler;
+		const resolvedSource = getImageSource(source);
 		if (workarea.layout === 'responsive') {
-			return this.setResponsiveImage(source, loaded);
+			return this.setResponsiveImage(resolvedSource || '', loaded);
 		}
 		const imageFromUrl = async (src: string) => {
 			const img = await fabric.FabricImage.fromURL(src, { crossOrigin: 'anonymous' });
@@ -545,7 +761,7 @@ class WorkareaHandler {
 			canvas.renderAll();
 			return workarea;
 		};
-		if (!source) {
+		if (!resolvedSource) {
 			const image = new Image(workarea.width, workarea.height);
 			image.width = workarea.width;
 			image.height = workarea.height;
@@ -563,22 +779,23 @@ class WorkareaHandler {
 			canvas.renderAll();
 			return workarea;
 		}
-		if (source instanceof File) {
+		if (resolvedSource instanceof File) {
 			return new Promise<WorkareaObject>(resolve => {
 				const reader = new FileReader();
 				reader.onload = () => {
 					workarea.set({
-						file: source,
+						file: resolvedSource,
+						src: reader.result as string,
 					});
 					imageFromUrl(reader.result as string).then(resolve);
 				};
-				reader.readAsDataURL(source);
+				reader.readAsDataURL(resolvedSource);
 			});
 		} else {
 			workarea.set({
-				src: source,
+				src: resolvedSource,
 			});
-			return imageFromUrl(source);
+			return imageFromUrl(resolvedSource);
 		}
 	};
 

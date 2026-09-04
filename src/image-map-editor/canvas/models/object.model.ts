@@ -118,6 +118,8 @@ export type FabricObjectOption<T extends object = Partial<TFabricObjectProps>> =
 	 * @type {boolean}
 	 */
 	editable?: boolean;
+	horizontalCentered?: boolean;
+	verticalCentered?: boolean;
 	/**
 	 * Object Super type
 	 * @type {string}
@@ -254,6 +256,16 @@ export interface PrintGuide {
 
 export type PrintUnit = 'in' | 'cm' | 'mm';
 
+export type CanvasRows = 1 | 2;
+
+/** Product print-safe distance, always expressed in millimetres. */
+export interface WorkareaSafeDistance {
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+}
+
 export interface WorkareaOption {
 	/**
 	 * Image URL
@@ -289,8 +301,16 @@ export interface WorkareaOption {
 	sideWidth?: number;
 	sideHeight?: number;
 	bleed?: number;
+	separateBleed?: boolean;
+	horizontalBleed?: number;
+	verticalBleed?: number;
+	canvasRowGap?: number;
 	spineWidth?: number;
 	spineBleed?: number;
+	canvasRows?: CanvasRows;
+	backCoverSafeDistance?: WorkareaSafeDistance;
+	coverSafeDistance?: WorkareaSafeDistance;
+	spineSafeDistance?: WorkareaSafeDistance;
 	printGuides?: PrintGuide[];
 }
 
@@ -319,9 +339,18 @@ export type WorkareaObject = FabricImage & {
 	sideWidth?: number;
 	sideHeight?: number;
 	bleed?: number;
+	separateBleed?: boolean;
+	horizontalBleed?: number;
+	verticalBleed?: number;
+	canvasRowGap?: number;
 	spineWidth?: number;
 	spineBleed?: number;
+	canvasRows?: CanvasRows;
+	backCoverSafeDistance?: WorkareaSafeDistance;
+	coverSafeDistance?: WorkareaSafeDistance;
+	spineSafeDistance?: WorkareaSafeDistance;
 	printGuides?: PrintGuide[];
+	innerPage?: boolean;
 };
 
 export interface CanvasOption extends Partial<CanvasOptions> {

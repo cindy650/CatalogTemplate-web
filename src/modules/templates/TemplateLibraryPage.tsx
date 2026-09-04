@@ -1,11 +1,71 @@
 import { useEffect, useMemo, useState } from 'react';
 import { App, Avatar, Button, Card, Empty, Image, Input, Space, Spin, Tag, Tooltip } from 'antd';
 import { AppstoreOutlined, EditOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
-import type { CatalogSizeTemplate, Shop } from '@shared/domain';
+import type { CatalogSizeTemplate, ProductCategory, Shop } from '@shared/domain';
 import { browserAlbumApi } from '../../api';
 import type { TemplateLibraryPageProps } from '../types';
 import type { TemplateLibraryShopSelection } from '../moduleRegistry';
 import ImageMapEditorTestPage from '../imageMapEditorTest/ImageMapEditorTestPage';
+
+const oathBookInitialSizeSchemes = [{
+  id: '默认规格',
+  idIsPersisted: false,
+  label: '默认规格',
+  unit: 'mm' as const,
+  pageCount: 50,
+  pageCountOptions: [50, 100],
+  sideWidth: 102.02,
+  sideHeight: 140.04,
+  bleed: 58,
+  separateBleed: true,
+  horizontalBleed: 58,
+  verticalBleed: 45.97,
+  canvasRowGap: 0,
+  spineWidthMode: 'fixed' as const,
+  spineWidth: 0,
+  minSpineWidth: 0,
+  maxSpineWidth: 0,
+  spineBleed: 0,
+  backCoverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+  coverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+  spineSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+  paperThickness: 0,
+}];
+
+function productInitialSizeSchemes(product: ProductCategory) {
+  const safeDistances = {
+    backCoverSafeDistance: product.backCoverSafeDistance,
+    coverSafeDistance: product.coverSafeDistance,
+    spineSafeDistance: product.spineSafeDistance,
+  };
+  if (product.name.trim().includes('宣誓册')) {
+    return oathBookInitialSizeSchemes.map((scheme) => ({ ...scheme, ...safeDistances }));
+  }
+  if (!product.commonSpecValues.length) return [safeDistances];
+  return product.commonSpecValues.map((spec, index) => {
+    const label = spec.label.trim() || spec.id.trim() || `规格 ${index + 1}`;
+    const pageCount = spec.pageCount > 0 ? spec.pageCount : spec.pageCountOptions[0] ?? 50;
+    const pageCountOptions = spec.pageCountOptions.length ? spec.pageCountOptions : [pageCount];
+    return {
+      id: label,
+      idIsPersisted: false,
+      label,
+      unit: spec.unit,
+      pageCount,
+      pageCountOptions,
+      sideWidth: spec.sideWidth,
+      sideHeight: spec.sideHeight,
+      bleed: spec.bleed,
+      spineWidthMode: spec.spineWidthMode,
+      spineWidth: spec.spineWidth,
+      minSpineWidth: spec.minSpineWidth,
+      maxSpineWidth: spec.maxSpineWidth,
+      spineBleed: spec.spineBleed,
+      ...safeDistances,
+      paperThickness: spec.paperThickness,
+    };
+  });
+}
 
 function shopName(shop?: Shop): string {
   return shop?.shopName || shop?.shop || '未命名店铺';
@@ -82,9 +142,10 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
       return (
         <ImageMapEditorTestPage
           shops={shops}
-          productDefaults={product.commonSpecValues}
           initialShopId={selectedShopId === 'ALL' ? undefined : selectedShopId}
           initialProductId={selectedProductId}
+          initialSizeSchemes={productInitialSizeSchemes(product)}
+          productSafeDistances={product}
           onExit={() => setEditingTemplateId(undefined)}
         />
       );
@@ -94,6 +155,7 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
       <ImageMapEditorTestPage
         shops={shops}
         template={template}
+        productSafeDistances={product}
         onExit={() => setEditingTemplateId(undefined)}
       />
     ) : <div className="template-library-editor-loading"><Spin size="large" /></div>;

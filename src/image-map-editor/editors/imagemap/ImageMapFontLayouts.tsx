@@ -9,7 +9,7 @@ import {
 	SyncOutlined,
 	UploadOutlined,
 } from '@ant-design/icons';
-import { App, Button, Checkbox, Col, Empty, Form, Image, Input, Modal, Popconfirm, Row, Select, Spin, Tag, Tooltip, Upload } from 'antd';
+import { App, Button, Checkbox, Col, Empty, Form, Image, Input, Modal, Popconfirm, Row, Segmented, Select, Spin, Tag, Tooltip, Upload } from 'antd';
 import React from 'react';
 
 import { EditorPanelHeader } from '../../components/editor';
@@ -24,7 +24,7 @@ export interface ImageMapFontLayoutSizeOptionStatus {
 	sizeOptionId: string;
 	label?: string;
 	hasSizeVariant?: boolean;
-	layersSource?: 'size_variant' | 'base';
+	layersSource?: 'size_template_option' | 'size_variant' | 'base';
 	usingBaseLayers?: boolean;
 	message?: string;
 }
@@ -48,6 +48,7 @@ export interface ImageMapFontLayoutLayerData {
 
 export type ImageMapFontLayoutLoader = (
 	shopId: ImageMapShopValue,
+	productId?: ImageMapShopValue,
 ) => Promise<ImageMapFontLayoutOption[]>;
 
 export interface ImageMapFontLayoutCategoryOption {
@@ -58,6 +59,8 @@ export interface ImageMapFontLayoutCategoryOption {
 export type ImageMapFontLayoutCategoryLoader = (
 	shopId: ImageMapShopValue,
 ) => Promise<ImageMapFontLayoutCategoryOption[]>;
+
+export type ImageMapFontLayoutProductLoader = ImageMapFontLayoutCategoryLoader;
 
 export type ImageMapFontLayoutCreator = (
 	shopId: ImageMapShopValue,
@@ -97,7 +100,7 @@ export type ImageMapFontLayoutSizeLoader = (
 
 export interface ImageMapFontLayoutSizeLoadResult {
 	layers: ImageMapFontLayoutLayerData;
-	layersSource?: 'size_variant' | 'base';
+	layersSource?: 'size_template_option' | 'size_variant' | 'base';
 	usingBaseLayers?: boolean;
 	message?: string;
 }
@@ -110,10 +113,13 @@ export type ImageMapFontLayoutSizeOptionSyncer = (
 
 interface ImageMapFontLayoutsProps {
 	createFontLayout?: ImageMapFontLayoutCreator;
+	createEmptyCanvasLayers?: (canvasRows: 1 | 2) => ImageMapFontLayoutLayerData;
 	defaultShopId?: ImageMapShopValue;
+	defaultProductId?: ImageMapShopValue;
 	deleteFontLayout?: ImageMapFontLayoutDeleter;
 	getCanvasLayers?: () => ImageMapFontLayoutLayerData;
 	loadFontLayoutCategories?: ImageMapFontLayoutCategoryLoader;
+	loadFontLayoutProducts?: ImageMapFontLayoutProductLoader;
 	loadFontLayouts?: ImageMapFontLayoutLoader;
 	loadFontLayoutSizeOptions?: ImageMapFontLayoutSizeOptionLoader;
 	onSelectFontLayout?: (layout: ImageMapFontLayoutOption) => void | Promise<void>;
@@ -127,10 +133,13 @@ interface ImageMapFontLayoutsProps {
 
 const ImageMapFontLayouts = ({
 	createFontLayout,
+	createEmptyCanvasLayers,
 	defaultShopId,
+	defaultProductId,
 	deleteFontLayout,
 	getCanvasLayers,
 	loadFontLayoutCategories,
+	loadFontLayoutProducts,
 	loadFontLayouts,
 	loadFontLayoutSizeOptions,
 	onSelectFontLayout,
@@ -142,9 +151,12 @@ const ImageMapFontLayouts = ({
 	updateFontLayout,
 }: ImageMapFontLayoutsProps) => {
 	const { message } = App.useApp();
-	const [selectedShopId, setSelectedShopId] = React.useState<ImageMapShopValue | undefined>(
-		defaultShopId ?? shops[0]?.value,
-	);
+		const [selectedShopId, setSelectedShopId] = React.useState<ImageMapShopValue | undefined>(
+			defaultShopId ?? shops[0]?.value,
+		);
+		const [selectedProductId, setSelectedProductId] = React.useState<ImageMapShopValue | undefined>(defaultProductId);
+		const [productOptions, setProductOptions] = React.useState<ImageMapFontLayoutCategoryOption[]>([]);
+		const [productLoading, setProductLoading] = React.useState(false);
 	const [layouts, setLayouts] = React.useState<ImageMapFontLayoutOption[]>([]);
 	const [loading, setLoading] = React.useState(false);
 	const [error, setError] = React.useState('');
@@ -154,6 +166,7 @@ const ImageMapFontLayouts = ({
 	const [editingLayoutId, setEditingLayoutId] = React.useState<ImageMapFontLayoutOption['id']>();
 	const [createName, setCreateName] = React.useState('');
 	const [createCategory, setCreateCategory] = React.useState<ImageMapShopValue>();
+	const [createCanvasRows, setCreateCanvasRows] = React.useState<1 | 2>(1);
 	const [categoryOptions, setCategoryOptions] = React.useState<ImageMapFontLayoutCategoryOption[]>([]);
 	const [categoryLoading, setCategoryLoading] = React.useState(false);
 	const [createShopId, setCreateShopId] = React.useState<ImageMapShopValue | undefined>();
@@ -168,11 +181,14 @@ const ImageMapFontLayouts = ({
 	const [syncStatuses, setSyncStatuses] = React.useState<ImageMapFontLayoutSizeOptionStatus[]>([]);
 	const [syncSelectedIds, setSyncSelectedIds] = React.useState<string[]>([]);
 	const requestIdRef = React.useRef(0);
-	const layoutsCacheRef = React.useRef(new Map<ImageMapShopValue, ImageMapFontLayoutOption[]>());
+	const layoutsCacheRef = React.useRef(new Map<string, ImageMapFontLayoutOption[]>());
 	const loadFontLayoutsRef = React.useRef(loadFontLayouts);
 	loadFontLayoutsRef.current = loadFontLayouts;
 	const selectedLayout = layouts.find(layout => layout.id === selectedLayoutId);
 	const editingLayout = layouts.find(layout => layout.id === editingLayoutId);
+	const canvasRowsFromLayers = React.useCallback((layers?: ImageMapFontLayoutLayerData): 1 | 2 => (
+		layers?.objects.find(object => object.id === 'workarea')?.canvasRows === 2 ? 2 : 1
+	), []);
 
 	React.useEffect(() => {
 		setSelectedShopId(current => {
@@ -183,16 +199,48 @@ const ImageMapFontLayouts = ({
 		});
 	}, [defaultShopId, shops]);
 
+	React.useEffect(() => {
+		if (defaultProductId !== undefined) {
+			setSelectedProductId(defaultProductId);
+		}
+	}, [defaultProductId]);
+
+	React.useEffect(() => {
+		if (selectedShopId === undefined || !loadFontLayoutProducts) {
+			setProductOptions([]);
+			return;
+		}
+		let cancelled = false;
+		setProductLoading(true);
+		void loadFontLayoutProducts(selectedShopId).then(options => {
+			if (cancelled) return;
+			setProductOptions(options);
+			setSelectedProductId(current => (
+				current !== undefined && options.some(option => option.value === current)
+					? current
+					: defaultProductId !== undefined && options.some(option => option.value === defaultProductId)
+						? defaultProductId
+						: options[0]?.value
+			));
+		}).catch(() => {
+			if (!cancelled) setProductOptions([]);
+		}).finally(() => {
+			if (!cancelled) setProductLoading(false);
+		});
+		return () => { cancelled = true; };
+	}, [defaultProductId, loadFontLayoutProducts, selectedShopId]);
+
 	const reload = React.useCallback(async (force = false) => {
 		const requestId = ++requestIdRef.current;
 		const loader = loadFontLayoutsRef.current;
-		if (selectedShopId === undefined || !loader) {
+		if (selectedShopId === undefined || !loader || (loadFontLayoutProducts && selectedProductId === undefined)) {
 			setLayouts([]);
 			setError(loader ? '' : '未配置字体布局数据源');
 			setLoading(false);
 			return;
 		}
-		const cachedLayouts = layoutsCacheRef.current.get(selectedShopId);
+		const cacheKey = `${String(selectedShopId)}:${selectedProductId === undefined ? '' : String(selectedProductId)}`;
+		const cachedLayouts = layoutsCacheRef.current.get(cacheKey);
 		if (!force && cachedLayouts) {
 			setLayouts(cachedLayouts);
 			setError('');
@@ -203,9 +251,9 @@ const ImageMapFontLayouts = ({
 		setLoading(true);
 		setError('');
 		try {
-			const nextLayouts = await loader(selectedShopId);
+			const nextLayouts = await loader(selectedShopId, selectedProductId);
 			if (requestId === requestIdRef.current) {
-				layoutsCacheRef.current.set(selectedShopId, nextLayouts);
+				layoutsCacheRef.current.set(cacheKey, nextLayouts);
 				setLayouts(nextLayouts);
 			}
 		} catch (loadError) {
@@ -218,7 +266,7 @@ const ImageMapFontLayouts = ({
 				setLoading(false);
 			}
 		}
-	}, [selectedShopId]);
+	}, [selectedProductId, selectedShopId]);
 
 	React.useEffect(() => {
 		void reload();
@@ -255,6 +303,7 @@ const ImageMapFontLayouts = ({
 		setEditingLayoutId(undefined);
 		setCreateName('');
 		setCreateCategory(undefined);
+		setCreateCanvasRows(1);
 		setCreateShopId(selectedShopId);
 		setCreatePreviewFile(undefined);
 		setOperationError('');
@@ -266,6 +315,7 @@ const ImageMapFontLayouts = ({
 		setEditingLayoutId(undefined);
 		setCreateName(selectedLayout ? `${selectedLayout.name} - 副本` : '布局副本');
 		setCreateCategory(selectedLayout?.productId);
+		setCreateCanvasRows(canvasRowsFromLayers(getCanvasLayers?.() ?? selectedLayout?.layers));
 		setCreateShopId(selectedShopId);
 		setCreatePreviewFile(undefined);
 		setOperationError('');
@@ -277,6 +327,7 @@ const ImageMapFontLayouts = ({
 		setEditingLayoutId(layout.id);
 		setCreateName(layout.name);
 		setCreateCategory(layout.productId);
+		setCreateCanvasRows(canvasRowsFromLayers(layout.layers));
 		setCreateShopId(selectedShopId);
 		setCreatePreviewFile(undefined);
 		setOperationError('');
@@ -300,11 +351,14 @@ const ImageMapFontLayouts = ({
 			if (editing && editingLayout) {
 				await updateFontLayout?.(editingLayout.id, createShopId, name, createPreviewFile, createCategory);
 			} else {
+				const layers = createMode === 'saveAs'
+					? getCanvasLayers?.()
+					: createEmptyCanvasLayers?.(createCanvasRows);
 				await createFontLayout?.(
 					createShopId,
 					name,
 					createPreviewFile,
-					createMode === 'saveAs' ? getCanvasLayers?.() : undefined,
+					layers,
 					createCategory,
 				);
 			}
@@ -314,7 +368,7 @@ const ImageMapFontLayouts = ({
 			if (createShopId === selectedShopId) {
 				await reload(true);
 			} else {
-				setSelectedShopId(createShopId);
+		setSelectedShopId(createShopId);
 			}
 			message.success(editing ? '字体布局已修改' : createMode === 'saveAs' ? '字体布局已另存为' : '字体布局已新增');
 		} catch (createError) {
@@ -418,15 +472,35 @@ const ImageMapFontLayouts = ({
 						<Button size="small" icon={<SyncOutlined />} disabled={!selectedLayout || sizeTemplateId === undefined || sizeOptions.length === 0 || !syncFontLayoutSizeOptions || !getCanvasLayers} onClick={openSyncModal}>同步尺寸</Button>
 					</div>
 					<div className="rde-font-layout-shop-field">
+						<span>所属产品</span>
+						<Select
+							showSearch
+							optionFilterProp="label"
+							aria-label="字体布局所属产品"
+							placeholder="选择产品"
+							value={selectedProductId}
+							options={productOptions}
+							loading={productLoading}
+							onChange={value => {
+								setSelectedProductId(value);
+								setSelectedLayoutId(undefined);
+							}}
+						/>
+					</div>
+					<div className="rde-font-layout-shop-field">
 						<span>所属店铺</span>
 						<Select
 							showSearch
 							optionFilterProp="label"
 							aria-label="字体布局所属店铺"
 							placeholder="选择店铺"
-							value={selectedShopId}
-							options={shops}
-							onChange={setSelectedShopId}
+			value={selectedShopId}
+			options={shops}
+			onChange={value => {
+				setSelectedShopId(value);
+				setSelectedProductId(undefined);
+				setSelectedLayoutId(undefined);
+			}}
 						/>
 					</div>
 					{operationError && !createOpen ? (
@@ -557,6 +631,18 @@ const ImageMapFontLayouts = ({
 							</Form.Item>
 						</Col>
 					</Row>
+					<Form.Item label="画布排数" required>
+						<Segmented
+							block
+							disabled={creating || createMode !== 'create'}
+							value={createCanvasRows}
+							options={[
+								{ value: 1, label: '单排' },
+								{ value: 2, label: '两排' },
+							]}
+							onChange={value => setCreateCanvasRows(value === 2 ? 2 : 1)}
+						/>
+					</Form.Item>
 					<div className="rde-font-layout-preview-upload">
 						<div className="rde-font-layout-preview-upload-copy">
 							<strong>预览图</strong>
@@ -609,7 +695,7 @@ const ImageMapFontLayouts = ({
 								>
 									<strong>{option.label || option.id}</strong>
 								</Checkbox>
-								{status?.layersSource ? <Tag color={status.layersSource === 'size_variant' ? 'blue' : 'default'}>{status.layersSource === 'size_variant' ? '专属图层' : '基础图层'}</Tag> : null}
+								{status?.layersSource ? <Tag color={status.layersSource === 'size_template_option' || status.layersSource === 'size_variant' ? 'blue' : 'default'}>{status.layersSource === 'size_template_option' ? '规格独立图层' : status.layersSource === 'size_variant' ? '专属图层' : '基础图层'}</Tag> : null}
 								{status?.message ? <span>{status.message}</span> : null}
 							</div>
 						);

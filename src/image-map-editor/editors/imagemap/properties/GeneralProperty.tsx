@@ -1,11 +1,13 @@
-import { Col, Form, Input, InputNumber, Row, Slider, Switch } from 'antd';
+import { Button, Col, Form, Input, InputNumber, Row, Select, Slider, Space } from 'antd';
+import { CheckOutlined } from '@ant-design/icons';
 import i18next from 'i18next';
 import React from 'react';
 
+import type { CanvasInstance } from '../../../canvas';
+import { imageMapPixelsPerUnit } from '../ImageMapSizeScheme';
+
 type GeneralPropertyData = {
 	type?: string;
-	locked?: boolean;
-	visible?: boolean;
 	name?: string;
 	rules?: string;
 	width: number;
@@ -15,57 +17,75 @@ type GeneralPropertyData = {
 	left?: number;
 	top?: number;
 	angle?: number;
+	horizontalCentered?: boolean;
+	verticalCentered?: boolean;
 	superType?: string;
 };
 
+export type ImageMapTextGenerationRule = {
+	id: string | number;
+	name: string;
+	description: string;
+};
+
+type GeneralPropertyContext = {
+	onCenterHorizontally?: () => void;
+	onCenterVertically?: () => void;
+	textGenerationRules?: ImageMapTextGenerationRule[];
+	textGenerationRulesLoading?: boolean;
+	onTextGenerationRuleSelect?: (rule: ImageMapTextGenerationRule) => void;
+};
+
 export default {
-	render(_canvasRef: unknown, _form: unknown, data: GeneralPropertyData) {
+	render(canvasRef: CanvasInstance | undefined, _form: unknown, data: GeneralPropertyData, context: GeneralPropertyContext = {}) {
+		const isPhysicalShape = ['rect', 'triangle', 'circle'].includes(String(data.type || '').toLowerCase());
+		const workareaUnit = canvasRef?.handler?.workarea?.unit;
+		const unit = workareaUnit === 'cm' || workareaUnit === 'mm' ? workareaUnit : 'in';
+		const factor = imageMapPixelsPerUnit[unit];
+		const displaySize = (value: number) => Number((value / factor).toFixed(4));
+		const width = data.width * data.scaleX;
+		const height = data.height * data.scaleY;
 		return (
 			<React.Fragment>
-				<Row>
-					<Col span={12}>
-						<Form.Item
-							label={i18next.t('common.locked')}
-							colon={false}
-							name="locked"
-							initialValue={data.locked}
-							rules={[{ type: 'boolean' }]}
-							valuePropName="checked"
-						>
-							<Switch size="small" />
-						</Form.Item>
-					</Col>
-					<Col span={12}>
-						<Form.Item
-							label={i18next.t('common.visible')}
-							colon={false}
-							name="visible"
-							initialValue={data.visible}
-							rules={[{ type: 'boolean' }]}
-							valuePropName="checked"
-						>
-							<Switch size="small" />
-						</Form.Item>
-					</Col>
-				</Row>
 				<Form.Item label={i18next.t('common.name')} colon={false} name="name" initialValue={data.name}>
 					<Input />
 				</Form.Item>
 				{data.type === 'textbox' || data.superType === 'text' ? (
-					<Form.Item label="生成规则" colon={false} name="rules" initialValue={data.rules}>
-						<Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
-					</Form.Item>
+					<React.Fragment>
+						<Form.Item label="规则模板" colon={false}>
+							<Select
+								allowClear
+								showSearch
+								optionFilterProp="label"
+								placeholder="选择规则模板"
+								loading={context.textGenerationRulesLoading}
+								value={context.textGenerationRules?.find(rule => rule.description === data.rules)?.id}
+								options={(context.textGenerationRules ?? []).map(rule => ({
+									value: rule.id,
+									label: rule.name || rule.description,
+									title: rule.description,
+								}))}
+								onChange={value => {
+									const rule = (context.textGenerationRules ?? []).find(candidate => candidate.id === value);
+									if (rule) context.onTextGenerationRuleSelect?.(rule);
+								}}
+							/>
+						</Form.Item>
+						<Form.Item label="生成规则" colon={false} name="rules" initialValue={data.rules}>
+							<Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
+						</Form.Item>
+					</React.Fragment>
 				) : null}
-				<Row>
+				<Row gutter={12} className="rde-object-general-row">
 					<Col span={12}>
 						<Form.Item
 							label={i18next.t('common.width')}
 							colon={false}
 							name="width"
-							initialValue={parseInt(String(data.width * data.scaleX), 10)}
-							rules={[{ type: 'number', required: true, message: '请输入宽度', min: 1 }]}
+							initialValue={isPhysicalShape ? displaySize(width) : parseInt(String(width), 10)}
+							rules={[{ type: 'number', required: true, message: '请输入宽度', min: isPhysicalShape ? 0.0001 : 1 }]}
 						>
-							<InputNumber min={1} />
+							<InputNumber min={isPhysicalShape ? 0.0001 : 1} precision={isPhysicalShape ? 4 : 0} addonAfter={isPhysicalShape ? unit : undefined} />
 						</Form.Item>
 					</Col>
 					<Col span={12}>
@@ -73,14 +93,14 @@ export default {
 							label={i18next.t('common.height')}
 							colon={false}
 							name="height"
-							initialValue={parseInt(String(data.height * data.scaleY), 10)}
-							rules={[{ type: 'number', required: true, message: '请输入高度', min: 1 }]}
+							initialValue={isPhysicalShape ? displaySize(height) : parseInt(String(height), 10)}
+							rules={[{ type: 'number', required: true, message: '请输入高度', min: isPhysicalShape ? 0.0001 : 1 }]}
 						>
-							<InputNumber min={1} />
+							<InputNumber min={isPhysicalShape ? 0.0001 : 1} precision={isPhysicalShape ? 4 : 0} addonAfter={isPhysicalShape ? unit : undefined} />
 						</Form.Item>
 					</Col>
 				</Row>
-				<Row>
+				<Row gutter={12} className="rde-object-general-row">
 					<Col span={12}>
 						<Form.Item
 							label={i18next.t('common.left')}
@@ -104,6 +124,12 @@ export default {
 						</Form.Item>
 					</Col>
 				</Row>
+				{data.type === 'textbox' || data.superType === 'text' ? null : (
+					<Space wrap size={8} className="rde-object-alignment-actions">
+						<Button aria-pressed={Boolean(data.horizontalCentered)} icon={data.horizontalCentered ? <CheckOutlined /> : undefined} type={data.horizontalCentered ? 'primary' : 'default'} size="small" onClick={context.onCenterHorizontally}>水平居中</Button>
+						<Button aria-pressed={Boolean(data.verticalCentered)} icon={data.verticalCentered ? <CheckOutlined /> : undefined} type={data.verticalCentered ? 'primary' : 'default'} size="small" onClick={context.onCenterVertically}>垂直居中</Button>
+					</Space>
+				)}
 				{data.superType === 'element' ? null : data.type === 'textbox' || data.superType === 'text' ? (
 					<Form.Item
 						label={i18next.t('common.angle')}

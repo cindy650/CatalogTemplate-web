@@ -26,15 +26,20 @@ function isImageLayer(object: Record<string, any>) {
 }
 
 /** Keep only reloadable image data in the persisted layer document. */
-export function serializeImageLayer<T extends Record<string, any>>(object: T): T {
+export function serializeImageLayer<T extends Record<string, any>>(
+	object: T,
+	options: { preserveWorkareaSource?: boolean } = {},
+): T {
 	const serialized: Record<string, any> = { ...object };
 	if (Array.isArray(serialized.objects)) {
-		serialized.objects = serialized.objects.map((child: Record<string, any>) => serializeImageLayer(child));
+		serialized.objects = serialized.objects.map((child: Record<string, any>) => serializeImageLayer(child, options));
 	}
 
 	if (serialized.id === 'workarea') {
-		delete serialized.src;
 		delete serialized.file;
+		if (!options.preserveWorkareaSource || typeof serialized.src !== 'string' || !serialized.src.trim()) {
+			delete serialized.src;
+		}
 	} else if (isImageLayer(serialized)) {
 		delete serialized.file;
 		if (typeof serialized.src !== 'string' || !serialized.src.trim()) {

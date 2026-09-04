@@ -18,14 +18,28 @@ export default {
 	render(_canvasRef: unknown, _form: unknown, data: StyleData) {
 		return (
 			<React.Fragment>
-				<Form.Item
-					label={i18next.t('imagemap.style.fill-color')}
-					colon={false}
-					name="fill"
-					initialValue={data.fill || 'rgba(0, 0, 0, 1)'}
-				>
-					<ColorPicker />
-				</Form.Item>
+				<Row gutter={12} className="rde-object-general-row">
+					<Col span={12}>
+						<Form.Item
+							label={i18next.t('imagemap.style.fill-color')}
+							colon={false}
+							name="fill"
+							initialValue={data.fill || 'rgba(0, 0, 0, 1)'}
+						>
+							<ColorPicker />
+						</Form.Item>
+					</Col>
+					<Col span={12}>
+						<Form.Item
+							label={i18next.t('imagemap.style.stroke-color')}
+							colon={false}
+							name="stroke"
+							initialValue={data.stroke || 'rgba(255, 255, 255, 0)'}
+						>
+							<ColorPicker />
+						</Form.Item>
+					</Col>
+				</Row>
 				<Form.Item
 					label={i18next.t('common.opacity')}
 					colon={false}
@@ -34,14 +48,6 @@ export default {
 					rules={[{ type: 'number', min: 0, max: 1 }]}
 				>
 					<Slider min={0} max={1} step={0.1} />
-				</Form.Item>
-				<Form.Item
-					label={i18next.t('imagemap.style.stroke-color')}
-					colon={false}
-					name="stroke"
-					initialValue={data.stroke || 'rgba(255, 255, 255, 0)'}
-				>
-					<ColorPicker />
 				</Form.Item>
 				<Form.Item
 					label={i18next.t('imagemap.style.stroke-width')}

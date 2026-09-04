@@ -176,6 +176,7 @@ class EventHandler extends AbstractHandler {
 			if (dragDuplicate) {
 				return dragDuplicate;
 			}
+			target.set({ horizontalCentered: false, verticalCentered: false });
 		}
 		switch (opt.action) {
 			case 'drag':

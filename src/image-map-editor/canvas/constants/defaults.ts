@@ -66,6 +66,7 @@ export const workareaOption: Partial<WorkareaObject> = {
 	bleed: 0.79,
 	spineWidth: 0.55,
 	spineBleed: 0.55,
+	canvasRows: 1,
 	printGuides: [],
 	lockScalingX: true,
 	lockScalingY: true,
@@ -112,4 +113,15 @@ export const activeSelectionOption = {
 	hasControls: true,
 };
 
-export const propertiesToInclude = ['id', 'name', 'description', 'locked', 'editable', 'printGuides'];
+export const propertiesToInclude = [
+	'id',
+	'name',
+	'description',
+	'locked',
+	'editable',
+	'canvasRows',
+	'canvasRowGap',
+	'printGuides',
+	'horizontalCentered',
+	'verticalCentered',
+];

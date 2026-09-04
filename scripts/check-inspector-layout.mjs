@@ -9,5 +9,7 @@ const layerList = stylesheet.match(/\.rde-imagemap-layer-list\s*\{([\s\S]*?)\}/)
 assert.match(objectProperties, /flex:\s*1\s+1\s+0(?:px)?\s*;/, 'object properties must use a zero flex basis');
 assert.match(layerPanel, /flex:\s*0\s+0\s+460px\s*;/, 'layer panel must not shrink when properties expand');
 assert.match(layerList, /overflow:\s*hidden\s*;/, 'layer list must keep scrolling inside its own container');
+assert.match(stylesheet, /\.rde-imagemap-object-properties\s*>\s*div\s*\{[\s\S]*?overflow-y:\s*scroll\s*;/, 'object properties must always reserve a vertical scrollbar track');
+assert.match(stylesheet, /\.rde-imagemap-object-properties\s*>\s*div\s*\{[\s\S]*?scrollbar-gutter:\s*stable\s*;/, 'object properties scrollbar gutter must be stable');
 
 console.log('inspector layout checks passed');

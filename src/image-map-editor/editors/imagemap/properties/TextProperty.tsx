@@ -1,4 +1,5 @@
-import { Button, Col, Form, Input, InputNumber, List, Tag, Tooltip } from 'antd';
+import { Button, Col, Form, Input, InputNumber, List, Space, Tag, Tooltip } from 'antd';
+import { CheckOutlined } from '@ant-design/icons';
 import React from 'react';
 
 import Icon from '../../../components/icon/Icon';
@@ -15,6 +16,8 @@ type TextData = {
 	charSpacing?: number;
 	wordSpacing?: number;
 	fontUrl?: string;
+	horizontalCentered?: boolean;
+	verticalCentered?: boolean;
 };
 
 type TextPropertyContext = {
@@ -23,6 +26,8 @@ type TextPropertyContext = {
 	fontFamiliesLoading?: boolean;
 	onFontSearch?: (search: string) => void;
 	onFontSelect?: (font: { family: string; filePath: string; aliases?: string[] }) => void | Promise<void | boolean>;
+	onCenterHorizontally?: () => void;
+	onCenterVertically?: () => void;
 };
 
 type FontFamilySearchProps = TextPropertyContext & {
@@ -41,8 +46,8 @@ const FontFamilySearch = ({
 }: FontFamilySearchProps) => {
 	const [search, setSearch] = React.useState('');
 	const [selectedFilePath, setSelectedFilePath] = React.useState('');
-	const skipNextSearchRef = React.useRef(false);
 	const skipNextEchoRef = React.useRef(false);
+	const searchTimerRef = React.useRef<number | undefined>(undefined);
 
 	React.useEffect(() => {
 		setSelectedFilePath(fontUrl?.trim() || '');
@@ -55,27 +60,50 @@ const FontFamilySearch = ({
 		}
 		const nextSearch = fontFamily?.trim() || '';
 		if (nextSearch === search) return;
-		skipNextSearchRef.current = true;
 		setSearch(nextSearch);
 	}, [fontFamily, fontUrl]);
 
-	React.useEffect(() => {
-		if (skipNextSearchRef.current) {
-			skipNextSearchRef.current = false;
+	React.useEffect(() => () => {
+		if (searchTimerRef.current !== undefined) {
+			window.clearTimeout(searchTimerRef.current);
+		}
+	}, []);
+
+	const scheduleSearch = (value: string) => {
+		if (searchTimerRef.current !== undefined) {
+			window.clearTimeout(searchTimerRef.current);
+			searchTimerRef.current = undefined;
+		}
+		const query = value.trim();
+		if (!query) {
+			onFontSearch?.('');
 			return;
 		}
-		const query = search.trim();
-		if (!query) return;
-		const timer = window.setTimeout(() => onFontSearch?.(query), 350);
-		return () => window.clearTimeout(timer);
-	}, [onFontSearch, search]);
+		searchTimerRef.current = window.setTimeout(() => {
+			searchTimerRef.current = undefined;
+			onFontSearch?.(query);
+		}, 350);
+	};
+
+	const runSearchImmediately = (value: string) => {
+		if (searchTimerRef.current !== undefined) {
+			window.clearTimeout(searchTimerRef.current);
+			searchTimerRef.current = undefined;
+		}
+		onFontSearch?.(value.trim());
+	};
 
 	return (
 		<div className="rde-font-search">
 			<Input.Search
 				allowClear
 				loading={fontFamiliesLoading}
-				onChange={event => setSearch(event.target.value)}
+				onChange={event => {
+					const value = event.target.value;
+					setSearch(value);
+					scheduleSearch(value);
+				}}
+				onSearch={runSearchImmediately}
 				placeholder="搜索字体"
 				value={search}
 			/>
@@ -95,9 +123,8 @@ const FontFamilySearch = ({
 										if (applied === false) return;
 										setSelectedFilePath(font.filePath);
 										skipNextEchoRef.current = true;
-										skipNextSearchRef.current = true;
 										setSearch(font.label);
-										}}
+									}}
 								>
 									<Tooltip title={font.label} placement="topLeft">
 										<span className="rde-font-search-label">{font.label}</span>
@@ -130,6 +157,12 @@ export default {
 					>
 						<InputNumber controls={false} style={{ width: '100%' }} />
 					</Form.Item>
+				</Col>
+				<Col span={24}>
+					<Space wrap size={8} className="rde-object-alignment-actions">
+						<Button aria-pressed={Boolean(data.horizontalCentered)} icon={data.horizontalCentered ? <CheckOutlined /> : undefined} type={data.horizontalCentered ? 'primary' : 'default'} size="small" onClick={context.onCenterHorizontally}>水平居中</Button>
+						<Button aria-pressed={Boolean(data.verticalCentered)} icon={data.verticalCentered ? <CheckOutlined /> : undefined} type={data.verticalCentered ? 'primary' : 'default'} size="small" onClick={context.onCenterVertically}>垂直居中</Button>
+					</Space>
 				</Col>
 				<Col span={24}>
 					<div className="rde-text-format-actions">

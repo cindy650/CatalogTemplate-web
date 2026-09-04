@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { App as AntdApp } from 'antd';
 import type {
-  AlbumTemplateDocument,
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
@@ -10,14 +9,14 @@ import type {
   ProductCategory,
   ProductCategoryPayload,
   CatalogSizeTemplate,
-  Shop,
-  TemplateSummary
+  Shop
 } from '@shared/domain';
 import AppLayout from './layout/AppLayout';
 import { renderActiveModule } from './modules/moduleRenderer';
 import { useAppRoute } from './router/useAppRoute';
 import { connectOrderEventStream } from './services/orderEventStream';
 import { notifyByVisibility, requestSystemNotificationPermission } from './services/notificationRouter';
+import { speakOrderMessage, unlockOrderSpeechOnFirstUserActivation } from './services/orderSpeech';
 import type { SseNotificationEvent } from '@shared/events';
 import { browserAlbumApi } from './api';
 import type { TemplateLibraryShopSelection } from './modules/moduleRegistry';
@@ -34,7 +33,6 @@ function App() {
   const [orderLimit, setOrderLimit] = useState(20);
   const [orderPage, setOrderPage] = useState(1);
   const [orderFilters, setOrderFilters] = useState<OrderListFilters>({ limit: 20, pages: 1 });
-  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [exports, setExports] = useState<ExportHistoryEntry[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
@@ -49,8 +47,8 @@ function App() {
   const [selectedSizeTemplateId, setSelectedSizeTemplateId] = useState<number>();
   const [productEditor, setProductEditor] = useState<ProductCategory | null | undefined>(undefined);
   const [templateLibraryEditorMode, setTemplateLibraryEditorMode] = useState(false);
+  const [innerPagesEditorMode, setInnerPagesEditorMode] = useState(false);
   const [orderTemplateEditorOrder, setOrderTemplateEditorOrder] = useState<Order>();
-  const [currentDocument, setCurrentDocument] = useState<AlbumTemplateDocument>();
   const [account, setAccount] = useState<LocalUserProfile>();
   const [status, setStatus] = useState('准备就绪');
   const initializedRef = useRef(false);
@@ -58,6 +56,7 @@ function App() {
 
   useEffect(() => {
     void requestSystemNotificationPermission();
+    return unlockOrderSpeechOnFirstUserActivation();
   }, []);
 
   const refreshOrders = useCallback(async (filters?: OrderListFilters) => {
@@ -155,12 +154,10 @@ function App() {
   }, []);
 
   const refreshLocalData = useCallback(async () => {
-    const [nextTemplates, nextExports, nextAccount] = await Promise.all([
-      browserAlbumApi.templates.list(),
+    const [nextExports, nextAccount] = await Promise.all([
       browserAlbumApi.exports.list(),
       browserAlbumApi.user.get()
     ]);
-    setTemplates(nextTemplates);
     setExports(nextExports);
     setAccount(nextAccount);
   }, []);
@@ -218,6 +215,8 @@ function App() {
           orderNumber ? `订单号：${orderNumber}` : ''
         ].filter(Boolean).join('；');
 
+        speakOrderMessage([event.msg || '新订单已入库', description].filter(Boolean).join('；'));
+
         void notifyByVisibility({
           title: event.msg || '新订单已入库',
           body: description,
@@ -236,6 +235,7 @@ function App() {
       onNotification: (event: SseNotificationEvent) => {
         const messageText = event.msg.trim();
         if (!messageText) return;
+        if (event.type.startsWith('order.')) speakOrderMessage(messageText);
         void notifyByVisibility({
           title: messageText,
           body: '',
@@ -250,28 +250,9 @@ function App() {
         setStatus(messageText);
       }
     });
-  }, [notification, refreshOrdersAfterSavedEvent]);
+  }, []);
 
   const selectedOrder = orders.find((order) => order.id === selectedOrderId) ?? orders[0];
-
-  async function openTemplate(templateId: string) {
-    try {
-      const document = await browserAlbumApi.templates.getLatest(templateId);
-      if (!document) {
-        setStatus('未找到模板');
-        message.warning('未找到模板');
-        return;
-      }
-      setCurrentDocument(document);
-      navigateToModule('editor');
-      setStatus(`已打开模板：${document.name}`);
-      message.success(`已打开模板：${document.name}`);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setStatus(`打开模板失败：${errorMessage}`);
-      message.error(`打开模板失败：${errorMessage}`);
-    }
-  }
 
   function openOrderInEditor(order: Order) {
     if (!hasOrderTemplateJson(order)) {
@@ -302,9 +283,10 @@ function App() {
     setStatus(`订单 ${order.orderNo} 的模板已保存`);
   }
 
-  function openShopOrders(shop: Shop) {
+  function openShopOrders(shop: Shop, status?: number) {
     const filters: OrderListFilters = {
       shop: shop.shop,
+      status,
       limit: orderLimit,
       pages: 1
     };
@@ -365,7 +347,6 @@ function App() {
 
   const moduleContent = renderActiveModule(activeModule, {
     account,
-    currentDocument,
     exports,
     loadError: ordersError,
     loading: ordersLoading,
@@ -373,7 +354,6 @@ function App() {
     orderTemplateEditorOrder,
     saveOrderTemplate,
     closeOrderTemplateEditor,
-    openTemplate,
     orders,
     orderLimit,
     orderPage,
@@ -387,7 +367,6 @@ function App() {
     selectedOrder,
     selectedOrderId,
     setAccount,
-    setCurrentDocument,
     setSelectedOrderId,
     setStatus,
     shops,
@@ -404,13 +383,14 @@ function App() {
     createProduct: () => setProductEditor(null),
     editProduct: (product) => setProductEditor(product),
     deleteProduct,
-    setTemplateLibraryEditorMode
+    setTemplateLibraryEditorMode,
+    setInnerPagesEditorMode
   });
 
   return (
     <AppLayout
       activeModule={activeModule}
-      editorMode={activeModule === 'editor' || activeModule === 'image-map-test' || (activeModule === 'template-library' && templateLibraryEditorMode)}
+      editorMode={activeModule === 'editor' || activeModule === 'image-map-test' || (activeModule === 'template-library' && templateLibraryEditorMode) || (activeModule === 'inner-pages' && innerPagesEditorMode)}
       shops={shops}
       products={products}
       selectedSizeTemplatesShopId={selectedSizeTemplatesShopId}

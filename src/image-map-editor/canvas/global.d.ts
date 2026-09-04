@@ -37,6 +37,8 @@ declare module 'fabric' {
 		fontSize?: number;
 		fontFamily?: string;
 		wordSpacing?: number;
+		horizontalCentered?: boolean;
+		verticalCentered?: boolean;
 		file?: File | null;
 		src?: string | null;
 		code?: any;
@@ -73,6 +75,8 @@ declare module 'fabric' {
 		fontSize?: number;
 		fontFamily?: string;
 		wordSpacing?: number;
+		horizontalCentered?: boolean;
+		verticalCentered?: boolean;
 		file?: File | null;
 		src?: string | null;
 		code?: any;

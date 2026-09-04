@@ -146,12 +146,23 @@ const MapProperties = ({
 	const activeSizeScheme = sizeSchemes.find(item => item.id === activeSizeSchemeId) ?? sizeSchemes[0];
 	const selectedPageCount = Form.useWatch('pageCount', form);
 	const selectedSpineWidthMode = Form.useWatch('spineWidthMode', form);
+	const usesSeparateBleed = activeSizeScheme?.separateBleed === true;
 	const unitRef = React.useRef(activeSizeScheme?.unit ?? 'in');
 
-	const workareaValues = React.useCallback((values: Record<string, any>) => ({
-		...values,
-		spineWidth: resolveImageMapSpineWidth(values),
-	}), []);
+	const workareaValues = React.useCallback((values: Record<string, any>) => {
+		const printValues: Record<string, any> = {
+			...values,
+			separateBleed: usesSeparateBleed,
+			bleed: usesSeparateBleed ? values.horizontalBleed : values.bleed,
+		};
+		delete printValues.backCoverSafeDistance;
+		delete printValues.coverSafeDistance;
+		delete printValues.spineSafeDistance;
+		return {
+			...printValues,
+			spineWidth: resolveImageMapSpineWidth(printValues),
+		};
+	}, [usesSeparateBleed]);
 
 	const emitWorkareaChange = React.useCallback((
 		changedValues: Record<string, any>,
@@ -195,17 +206,23 @@ const MapProperties = ({
 			sideWidth: activeSizeScheme?.sideWidth ?? workarea.sideWidth ?? 9,
 			sideHeight: activeSizeScheme?.sideHeight ?? workarea.sideHeight ?? 6,
 			bleed: activeSizeScheme?.bleed ?? workarea.bleed ?? 0.79,
+			separateBleed: usesSeparateBleed,
+			horizontalBleed: activeSizeScheme?.horizontalBleed ?? workarea.horizontalBleed ?? activeSizeScheme?.bleed ?? workarea.bleed ?? 0.79,
+			verticalBleed: activeSizeScheme?.verticalBleed ?? workarea.verticalBleed ?? activeSizeScheme?.bleed ?? workarea.bleed ?? 0.79,
 			spineWidthMode: activeSizeScheme?.spineWidthMode ?? 'fixed',
 			spineWidth: activeSizeScheme?.spineWidth ?? workarea.spineWidth ?? 0.55,
 			minSpineWidth: activeSizeScheme?.minSpineWidth ?? 0.55,
 			maxSpineWidth: activeSizeScheme?.maxSpineWidth ?? 0.7,
 			spineBleed: activeSizeScheme?.spineBleed ?? workarea.spineBleed ?? 0.55,
+			backCoverSafeDistance: activeSizeScheme?.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+			coverSafeDistance: activeSizeScheme?.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+			spineSafeDistance: activeSizeScheme?.spineSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
 			paperThickness: activeSizeScheme?.paperThickness ?? 0,
 			imageLoadType: workarea.imageLoadType || 'file',
 			file: workarea.file,
 			src: workarea.src,
 		});
-	}, [activeSizeScheme, form, workarea]);
+	}, [activeSizeScheme, form, usesSeparateBleed, workarea]);
 
 	if (!canvasRef) {
 		return null;
@@ -221,6 +238,9 @@ const MapProperties = ({
 					if (
 						Object.hasOwn(changedValues, 'sizeSchemeLabel')
 						|| Object.hasOwn(changedValues, 'pageCountOptions')
+						|| Object.hasOwn(changedValues, 'backCoverSafeDistance')
+						|| Object.hasOwn(changedValues, 'coverSafeDistance')
+						|| Object.hasOwn(changedValues, 'spineSafeDistance')
 					) {
 						return;
 					}
@@ -276,13 +296,16 @@ const MapProperties = ({
 										'unit',
 										'sideWidth',
 										'sideHeight',
-										'bleed',
+										...(usesSeparateBleed ? ['horizontalBleed', 'verticalBleed'] : ['bleed']),
 										'spineWidthMode',
 										'spineWidth',
 										'spineBleed',
 										'minSpineWidth',
 										'maxSpineWidth',
 										'paperThickness',
+										'backCoverSafeDistance',
+										'coverSafeDistance',
+										'spineSafeDistance',
 									]).then(values => {
 										const allValues = form.getFieldsValue(true);
 										onSaveSizeScheme({
@@ -292,12 +315,18 @@ const MapProperties = ({
 											pageCountOptions: allValues.pageCountOptions,
 											sideWidth: allValues.sideWidth,
 											sideHeight: allValues.sideHeight,
-											bleed: allValues.bleed ?? 0,
+											bleed: usesSeparateBleed ? allValues.horizontalBleed ?? 0 : allValues.bleed ?? 0,
+											separateBleed: usesSeparateBleed,
+											horizontalBleed: usesSeparateBleed ? allValues.horizontalBleed ?? 0 : allValues.bleed ?? 0,
+											verticalBleed: usesSeparateBleed ? allValues.verticalBleed ?? 0 : allValues.bleed ?? 0,
 											spineWidthMode: allValues.spineWidthMode ?? 'fixed',
 											spineWidth: allValues.spineWidth ?? 0,
 											minSpineWidth: allValues.minSpineWidth ?? 0,
 											maxSpineWidth: allValues.maxSpineWidth ?? 0,
 											spineBleed: allValues.spineBleed ?? 0,
+											backCoverSafeDistance: allValues.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+											coverSafeDistance: allValues.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+											spineSafeDistance: allValues.spineSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
 											paperThickness: allValues.paperThickness ?? 0,
 										});
 									});
@@ -418,12 +447,27 @@ const MapProperties = ({
 										</Col>
 									</Row>
 					<Row gutter={8}>
-						<Col span={12}>
-							<Form.Item label="出血" name="bleed" rules={[{ required: true, message: '请输入出血' }]}>
-								<InputNumber min={0} precision={4} style={{ width: '100%' }} />
-							</Form.Item>
-						</Col>
-						<Col span={12}>
+						{usesSeparateBleed ? (
+							<>
+								<Col span={12}>
+									<Form.Item label="左右出血" name="horizontalBleed" rules={[{ required: true, message: '请输入左右出血' }]}>
+										<InputNumber min={0} precision={4} style={{ width: '100%' }} />
+									</Form.Item>
+								</Col>
+								<Col span={12}>
+									<Form.Item label="上下出血" name="verticalBleed" rules={[{ required: true, message: '请输入上下出血' }]}>
+										<InputNumber min={0} precision={4} style={{ width: '100%' }} />
+									</Form.Item>
+								</Col>
+							</>
+						) : (
+							<Col span={12}>
+								<Form.Item label="出血" name="bleed" rules={[{ required: true, message: '请输入出血' }]}>
+									<InputNumber min={0} precision={4} style={{ width: '100%' }} />
+								</Form.Item>
+							</Col>
+						)}
+						<Col span={usesSeparateBleed ? 24 : 12}>
 							<Form.Item label="背脊依据" name="spineWidthMode" rules={[{ required: true, message: '请选择背脊依据' }]}>
 								<Segmented
 									block

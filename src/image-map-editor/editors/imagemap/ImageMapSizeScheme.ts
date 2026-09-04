@@ -1,5 +1,12 @@
 import type { PrintUnit } from '../../canvas/models';
 
+export interface ImageMapSafeDistance {
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+}
+
 export interface ImageMapSizeSchemeValue {
 	id: string;
 	/** Internal flag used to preserve IDs assigned by the catalog API when labels change. */
@@ -16,6 +23,15 @@ export interface ImageMapSizeSchemeValue {
 	minSpineWidth: number;
 	maxSpineWidth: number;
 	spineBleed: number;
+	backCoverSafeDistance: ImageMapSafeDistance;
+	coverSafeDistance: ImageMapSafeDistance;
+	spineSafeDistance: ImageMapSafeDistance;
+	/** Use independent horizontal and vertical bleed controls for this size. */
+	separateBleed?: boolean;
+	horizontalBleed?: number;
+	verticalBleed?: number;
+	/** Gap between rows in the two-row canvas, in editor pixels. */
+	canvasRowGap?: number;
 	/** Paper thickness is always entered and stored in millimetres. */
 	paperThickness: number;
 }
@@ -37,6 +53,13 @@ const createPageCountOptions = (values: unknown, selected: number) => {
 	return Array.from(new Set([...(options.length ? options : [50, 100]), selected])).sort((left, right) => left - right);
 };
 
+const createSafeDistance = (value?: Partial<ImageMapSafeDistance>): ImageMapSafeDistance => ({
+	top: positiveNumber(value?.top, 0),
+	right: positiveNumber(value?.right, 0),
+	bottom: positiveNumber(value?.bottom, 0),
+	left: positiveNumber(value?.left, 0),
+});
+
 export const createImageMapSizeScheme = (
 	value: Partial<ImageMapSizeSchemeValue> = {},
 ): ImageMapSizeSchemeValue => {
@@ -53,11 +76,18 @@ export const createImageMapSizeScheme = (
 		sideWidth: positiveNumber(value.sideWidth, 9),
 		sideHeight: positiveNumber(value.sideHeight, 6),
 		bleed: positiveNumber(value.bleed, 0.79),
+		separateBleed: value.separateBleed === true,
+		horizontalBleed: positiveNumber(value.horizontalBleed, positiveNumber(value.bleed, 0.79)),
+		verticalBleed: positiveNumber(value.verticalBleed, positiveNumber(value.bleed, 0.79)),
+		...(value.canvasRowGap !== undefined ? { canvasRowGap: positiveNumber(value.canvasRowGap, 0) } : {}),
 		spineWidthMode: value.spineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed',
 		spineWidth: positiveNumber(value.spineWidth, 0.55),
 		minSpineWidth: positiveNumber(value.minSpineWidth, 0.55),
 		maxSpineWidth: positiveNumber(value.maxSpineWidth, 0.7),
 		spineBleed: positiveNumber(value.spineBleed, 0.55),
+		backCoverSafeDistance: createSafeDistance(value.backCoverSafeDistance),
+		coverSafeDistance: createSafeDistance(value.coverSafeDistance),
+		spineSafeDistance: createSafeDistance(value.spineSafeDistance),
 		paperThickness: positiveNumber(value.paperThickness, 0),
 	};
 };
@@ -98,6 +128,12 @@ const inchesPerUnit: Record<PrintUnit, number> = {
 	mm: 1 / 25.4,
 };
 
+export const imageMapPixelsPerUnit: Record<PrintUnit, number> = {
+	in: 96,
+	cm: 96 / 2.54,
+	mm: 96 / 25.4,
+};
+
 const convertedNumber = (value: number, from: PrintUnit, to: PrintUnit) => {
 	const converted = positiveNumber(value, 0) * inchesPerUnit[from] / inchesPerUnit[to];
 	return Number(converted.toFixed(4));
@@ -117,10 +153,16 @@ export const convertImageMapSizeSchemeUnit = (
 		sideWidth: convertedNumber(value.sideWidth ?? 0, from, to),
 		sideHeight: convertedNumber(value.sideHeight ?? 0, from, to),
 		bleed: convertedNumber(value.bleed ?? 0, from, to),
+		horizontalBleed: convertedNumber(value.horizontalBleed ?? value.bleed ?? 0, from, to),
+		verticalBleed: convertedNumber(value.verticalBleed ?? value.bleed ?? 0, from, to),
 		spineWidth: convertedNumber(value.spineWidth ?? 0, from, to),
 		minSpineWidth: convertedNumber(value.minSpineWidth ?? 0, from, to),
 		maxSpineWidth: convertedNumber(value.maxSpineWidth ?? 0, from, to),
 		spineBleed: convertedNumber(value.spineBleed ?? 0, from, to),
+		// Safe distances are always stored in millimetres and do not follow the size unit.
+		backCoverSafeDistance: createSafeDistance(value.backCoverSafeDistance),
+		coverSafeDistance: createSafeDistance(value.coverSafeDistance),
+		spineSafeDistance: createSafeDistance(value.spineSafeDistance),
 	};
 };
 

@@ -33,9 +33,19 @@ import type { ShopsPageProps } from '../types';
 type ShopFormValues = {
   shop: string;
   shopName: string;
+  wecomRobotWebhookUrl?: string;
 };
 
 type ShopModalMode = 'create' | 'edit' | 'view';
+
+const shopOrderStatuses = [
+  { status: 0, label: '新订单', countKey: 'newOrderCount', className: 'new' },
+  { status: 1, label: '客户确认中', countKey: 'confirmationCount', className: 'confirmation' },
+  { status: 2, label: '待生产', countKey: 'pendingProductionCount', className: 'pending-production' },
+  { status: 3, label: '生产中', countKey: 'inProductionCount', className: 'production' },
+  { status: 4, label: '待发货', countKey: 'pendingShipmentCount', className: 'shipment' },
+  { status: 5, label: '已完成', countKey: 'completedOrderCount', className: 'completed' }
+] as const;
 
 export default function ShopsPage({
   shops,
@@ -57,7 +67,11 @@ export default function ShopsPage({
 
   useEffect(() => {
     if (!modalOpen) return;
-    form.setFieldsValue({ shop: editingShop?.shop ?? '', shopName: editingShop?.shopName ?? '' });
+    form.setFieldsValue({
+      shop: editingShop?.shop ?? '',
+      shopName: editingShop?.shopName ?? '',
+      wecomRobotWebhookUrl: editingShop?.wecomRobotWebhookUrl ?? ''
+    });
   }, [editingShop, form, modalOpen]);
 
   function openShopModal(shop?: Shop, mode: ShopModalMode = shop ? 'edit' : 'create') {
@@ -94,6 +108,7 @@ export default function ShopsPage({
     const payload: ShopPayload = {
       shop: values.shop.trim(),
       shopName: values.shopName.trim(),
+      wecomRobotWebhookUrl: values.wecomRobotWebhookUrl?.trim() ?? '',
       products
     };
 
@@ -211,6 +226,23 @@ export default function ShopsPage({
             <Statistic title="尺寸模板数" value={shop.sizeTemplateCount} prefix={<ColumnWidthOutlined />} />
             <Statistic title="字体模板数" value={shop.fontTemplateCount} prefix={<FontSizeOutlined />} />
           </div>
+          <div className="shop-order-statuses" aria-label="订单状态统计">
+            <span className="shop-order-status-title">订单状态</span>
+            <div className="shop-order-status-grid">
+              {shopOrderStatuses.map((item) => (
+                <button
+                  type="button"
+                  className={`shop-order-status shop-order-status-${item.className}`}
+                  aria-label={`查看 ${shop.shopName || shop.shop} 的${item.label}订单`}
+                  key={item.status}
+                  onClick={() => openShopOrders(shop, item.status)}
+                >
+                  <span>{item.label}</span>
+                  <strong>{shop[item.countKey]}</strong>
+                </button>
+              ))}
+            </div>
+          </div>
         </Card>
       ))}
     </div>
@@ -264,6 +296,17 @@ export default function ShopsPage({
             rules={[{ required: true, whitespace: true, message: '请输入店铺名称' }]}
           >
             <Input placeholder="请输入店铺名称" autoComplete="off" disabled={modalMode === 'view'} />
+          </Form.Item>
+          <Form.Item
+            name="wecomRobotWebhookUrl"
+            label="企业微信机器人"
+            extra="可选，填写企业微信群机器人的 Webhook 地址。"
+          >
+            <Input
+              placeholder="请输入企业微信机器人 Webhook 地址"
+              autoComplete="off"
+              disabled={modalMode === 'view'}
+            />
           </Form.Item>
           <Form.Item
             label="店铺商品"

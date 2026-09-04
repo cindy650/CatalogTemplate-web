@@ -1352,6 +1352,27 @@
   background: var(--rde-shell-700);
 }
 
+.rde-imagemap-configurations > .rde-editor-panel-header .rde-editor-panel-header-copy {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+}
+
+.rde-imagemap-configurations > .rde-editor-panel-header .rde-editor-panel-eyebrow {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--rde-shell-muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.rde-imagemap-configurations > .rde-editor-panel-header .rde-editor-panel-description {
+  display: none;
+}
+
 .rde-operator-editor .rde-editor-items {
   position: relative;
   width: auto;
@@ -1432,17 +1453,88 @@
   border-bottom: 1px solid var(--rde-shell-border);
 }
 
+.rde-inner-page-size-section {
+  padding: 14px 12px 16px;
+}
+
+.rde-inner-page-size-fields {
+  padding-top: 12px;
+  border-top: 1px solid var(--rde-shell-border);
+}
+
+.rde-inner-page-size-fields-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.rde-inner-page-size-fields-heading strong {
+  color: var(--rde-shell-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rde-inner-page-size-fields-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.rde-inner-page-size-fields-heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--rde-shell-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rde-inner-page-unit-select.ant-select {
+  width: 100%;
+}
+
+.rde-inner-page-unit-field.ant-form-item {
+  margin-bottom: 10px;
+}
+
+.rde-inner-page-size-name-field.ant-form-item {
+  margin-bottom: 12px;
+}
+
+.rde-inner-page-size-name-field .ant-form-item-label > label {
+  white-space: nowrap;
+}
+
+.rde-inner-page-size-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 8px;
+}
+
+.rde-inner-page-size-fields-grid .ant-form-item {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.rde-inner-page-size-fields-grid .ant-input-number {
+  width: 100%;
+}
+
 .rde-size-scheme-toolbar {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
 }
 
 .rde-size-scheme-heading {
   display: flex;
+  flex: 1 1 104px;
   min-width: 0;
   flex-direction: column;
   gap: 1px;
@@ -1452,11 +1544,13 @@
   color: var(--rde-shell-text);
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .rde-size-scheme-heading span {
   color: var(--rde-shell-muted);
   font-size: 10px;
+  white-space: nowrap;
 }
 
 .rde-size-scheme-toolbar .ant-btn {
@@ -1464,6 +1558,11 @@
   gap: 4px;
   padding-inline: 6px;
   font-size: 11px;
+}
+
+.rde-size-scheme-toolbar > .ant-space {
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .rde-size-scheme-toolbar .ant-btn .anticon {
@@ -1842,6 +1941,39 @@
 
 .rde-font-layout-create-form .ant-form-item-label {
   padding-bottom: 5px;
+}
+
+.rde-font-layout-create-form .ant-segmented {
+  min-height: 38px;
+  padding: 3px;
+  border: 1px solid var(--rde-shell-border);
+  border-radius: 6px;
+  background: var(--rde-section-background);
+}
+
+.rde-font-layout-create-form .ant-segmented-item {
+  min-height: 30px;
+  color: var(--rde-shell-muted);
+  font-weight: 500;
+  line-height: 30px;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.rde-font-layout-create-form .ant-segmented-item-selected,
+.rde-font-layout-create-form .ant-segmented-item-selected:hover {
+  color: #fff;
+  background: #1677ff;
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.28);
+}
+
+.rde-font-layout-create-form .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #fff;
+}
+
+.rde-font-layout-create-form .ant-segmented-item-disabled.ant-segmented-item-selected {
+  color: rgba(255, 255, 255, 0.85);
+  background: #91caff;
+  box-shadow: none;
 }
 
 .rde-font-layout-preview-upload {
@@ -2492,6 +2624,37 @@
   /* Collapse content must scroll inside this region instead of changing the layer panel height. */
   flex: 1 1 0;
   overflow: hidden;
+}
+
+.rde-object-property-sections {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px;
+}
+
+.rde-imagemap-object-properties > div {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--rde-shell-border) transparent;
+  scrollbar-width: thin;
+}
+
+.rde-imagemap-object-properties > div::-webkit-scrollbar {
+  width: 10px;
+}
+
+.rde-imagemap-object-properties > div::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--rde-shell-border);
+}
+
+.rde-imagemap-object-properties > div::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .rde-imagemap-layer-panel .rde-editor-panel-header {
@@ -3160,8 +3323,16 @@
 
 .rde-imagemap-items .rde-canvas-list-item-actions {
   flex: 0 0 auto !important;
+  gap: 2px;
   margin-left: auto;
   padding-left: 8px;
+}
+
+.rde-imagemap-items .rde-canvas-list-item-actions .ant-btn {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
 }
 
 .rde-imagemap-items .rde-canvas-list-item-actions .ant-btn:not(.ant-btn-dangerous) {
@@ -3169,6 +3340,13 @@
 }
 
 .rde-imagemap-items .rde-canvas-list-item-actions .ant-btn.is-secondary:not(:disabled):hover {
+  color: var(--rde-mint);
+  background: var(--rde-mint-soft);
+}
+
+.rde-imagemap-items .rde-canvas-list-item-actions .rde-layer-state-btn.is-active,
+.rde-imagemap-items .rde-canvas-list-item-actions .rde-layer-state-btn.is-active:hover {
+  border-color: var(--rde-primary-border-hover);
   color: var(--rde-mint);
   background: var(--rde-mint-soft);
 }
@@ -3564,4 +3742,19 @@
   .rde-editor-statusbar {
     grid-template-columns: 1fr auto;
   }
+}
+.rde-object-alignment-actions {
+  display: flex;
+  margin-bottom: 12px;
+}
+
+.rde-object-alignment-actions + .ant-form-item {
+  margin-top: 4px;
+}
+
+.rde-object-alignment-actions .ant-btn-primary {
+  border-color: #1677ff;
+  color: #fff;
+  background: #1677ff;
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.3);
 }

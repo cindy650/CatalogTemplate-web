@@ -6,6 +6,10 @@ import type {
   CatalogSizeOptionFields,
   CatalogSizeTemplate,
   CatalogSizeTemplatePayload,
+  InnerPageTemplate,
+  InnerPageTemplatePayload,
+  InnerPageSizeOption,
+  InnerPageSizeOptionUpdatePayload,
   FontLayoutCanvas,
   FontLayoutLibraryPayload,
   FontLayoutLibraryTemplate,
@@ -44,8 +48,11 @@ import type {
   TemplateImportAnalyzeResult,
   TemplateImportDraft,
   TemplateImportFinalizeResult,
-  TemplateSummary
+  TemplateSummary,
+  TextGenerationRule,
+  TextGenerationRulePayload
 } from '@shared/domain';
+import { normalizeProductSafeDistances } from './shared/safeDistance';
 import { apiBaseUrl, apiRequest, httpClient } from './api/httpClient';
 
 const storageKeys = {
@@ -347,9 +354,16 @@ function toShop(value: unknown): Shop {
     id: numberValue(record.id),
     shop: textValue(record.shop),
     shopName: textValue(record.shop_name),
+    wecomRobotWebhookUrl: textValue(record.wecom_robot_webhook_url ?? record.wecomRobotWebhookUrl),
     products,
     productCount: numberValue(record.product_count),
     orderCount: numberValue(record.order_count),
+    newOrderCount: numberValue(record.new_order_count),
+    confirmationCount: numberValue(record.confirmation_count),
+    pendingProductionCount: numberValue(record.pending_production_count),
+    inProductionCount: numberValue(record.in_production_count),
+    pendingShipmentCount: numberValue(record.pending_shipment_count),
+    completedOrderCount: numberValue(record.completed_order_count),
     sizeTemplateCount: numberValue(record.size_template_count),
     fontTemplateCount: numberValue(record.font_template_count),
     createdAt: textValue(record.created_at),
@@ -448,6 +462,7 @@ function toProductCategory(value: unknown): ProductCategory {
     specifications,
     specificationField: textValue(record.specification_field ?? record.specificationField),
     commonSpecValues: normalizeProductCommonSpecValues(rawCommonSpecValues),
+    ...normalizeProductSafeDistances(record),
     shopIds,
     shops: rawShops.map(toProductShop).filter((shop) => shop.id > 0),
     sizeTemplateIds: Array.isArray(rawTemplateIds) ? rawTemplateIds.map(numberValue).filter((id) => id > 0) : []
@@ -714,6 +729,61 @@ function fontLayoutLayerPayload(value: FontLayoutLibraryPayload['layers']) {
   return value;
 }
 
+function normalizeInnerPageSizeOption(value: unknown): InnerPageSizeOption {
+  const record = recordValue(value);
+  const id = textValue(record.id ?? record.size_option_id ?? record.value).trim();
+  const label = textValue(record.label ?? record.name ?? record.id ?? record.value).trim() || id;
+  const rawLayers = record.layers ?? record.layer_data ?? {};
+  const layers = normalizeFontLayoutLayerData(rawLayers);
+  const workarea = layers.objects.find((object) => object.id === 'workarea');
+  const rawSizeUnit = textValue(record.size_unit ?? record.sizeUnit ?? workarea?.unit);
+  const sizeUnit = rawSizeUnit === 'cm' || rawSizeUnit === 'mm' ? rawSizeUnit : 'in';
+  return { id, label, sizeUnit, layers };
+}
+
+function normalizeInnerPageTemplate(value: unknown): InnerPageTemplate {
+  const record = recordValue(namedApiValue(value, 'inner_page_template'));
+  const rawOptions = Array.isArray(record.size_options ?? record.sizeOptions) ? (record.size_options ?? record.sizeOptions) as unknown[] : [];
+  return {
+    id: numberValue(record.id),
+    shopId: numberValue(record.shop_id ?? record.shopId),
+    productId: numberValue(record.product_id ?? record.productId),
+    name: textValue(record.name ?? record.template_name).trim(),
+    description: textValue(record.description).trim(),
+    previewImagePath: apiFileUrl(record.preview_image ?? record.previewImage ?? record.preview_image_path ?? record.previewImagePath),
+    sizeOptions: rawOptions.map(normalizeInnerPageSizeOption),
+    createdAt: textValue(record.created_at ?? record.createdAt),
+    updatedAt: textValue(record.updated_at ?? record.updatedAt),
+  };
+}
+
+function innerPageTemplatePayload(payload: InnerPageTemplatePayload): Record<string, unknown> {
+  return {
+    ...(payload.shopId !== undefined ? { shop_id: payload.shopId } : {}),
+    product_id: payload.productId,
+    ...(payload.name !== undefined ? { name: payload.name } : {}),
+    ...(payload.description !== undefined ? { description: payload.description } : {}),
+    ...(payload.previewImagePath !== undefined ? { preview_image: payload.previewImagePath } : {}),
+    ...(payload.sizeOptions !== undefined ? {
+      size_options: payload.sizeOptions.map((option) => ({
+        id: option.id,
+        label: option.label,
+        size_unit: option.sizeUnit,
+        layers: fontLayoutLayerPayload(option.layers),
+      }))
+    } : {}),
+  };
+}
+
+function innerPageSizeOptionPayload(payload: InnerPageSizeOption | InnerPageSizeOptionUpdatePayload): Record<string, unknown> {
+  return {
+    ...('id' in payload ? { id: payload.id } : {}),
+    ...(payload.label !== undefined ? { label: payload.label } : {}),
+    ...(payload.sizeUnit !== undefined ? { size_unit: payload.sizeUnit } : {}),
+    ...(payload.layers !== undefined ? { layers: fontLayoutLayerPayload(payload.layers) } : {}),
+  };
+}
+
 function normalizeCatalogSizeOption(value: unknown): CatalogSizeOption {
   const record = recordValue(value);
   const nestedFieldsRecord = recordValue(record.fields);
@@ -739,10 +809,12 @@ function normalizeCatalogSizeOption(value: unknown): CatalogSizeOption {
       spine_bleed: normalizeUnitMetric('spine_bleed')
     } } : {})
   };
+  const hasLayers = record.layers !== undefined;
   return {
     id: textValue(record.id ?? record.size_option_id ?? record.value).trim(),
     label: textValue(record.label ?? record.name ?? record.id ?? record.value).trim(),
-    fields
+    fields,
+    ...(hasLayers ? { layers: normalizeFontLayoutLayerData(record.layers) } : {})
   };
 }
 
@@ -781,16 +853,6 @@ function mountedFontLayoutsFromResponse(value: unknown): MountedFontLayout[] {
 
   const direct = normalizeMountedFontLayout(unwrapped);
   return direct.id ? [direct] : [];
-}
-
-function normalizeSafeDistance(value: unknown) {
-  const record = recordValue(value);
-  return {
-    top: numberValue(record.top),
-    right: numberValue(record.right),
-    bottom: numberValue(record.bottom),
-    left: numberValue(record.left)
-  };
 }
 
 function normalizeCatalogSizeTemplate(value: unknown): CatalogSizeTemplate {
@@ -832,7 +894,7 @@ function normalizeCatalogSizeTemplate(value: unknown): CatalogSizeTemplate {
     maxSpineWidth: numberValue(record.max_spine_width ?? record.maxSpineWidth),
     paperThicknessMm: numberValue(record.paper_thickness_mm ?? record.paperThicknessMm),
     spineWidthBasis: numberValue(record.spine_width_basis ?? record.spineWidthBasis) === 1 ? 1 : 0,
-    coverSafeDistance: normalizeSafeDistance(record.cover_safe_distance ?? record.coverSafeDistance),
+    ...normalizeProductSafeDistances(record),
     selectedSizeOptionId: textValue(record.selected_size_option_id ?? record.selectedSizeOptionId).trim()
       || normalizeCatalogSizeOption(selectedOptionId).id
       || options[0]?.id
@@ -875,8 +937,8 @@ function normalizeFontLayoutLibraryTemplate(value: unknown): FontLayoutLibraryTe
     ...(typeof isCurrentSizeTemplateLayout === 'boolean'
       ? { isCurrentSizeTemplateLayout }
       : {}),
-    ...(layersSource === 'size_variant' || layersSource === 'base'
-      ? { layersSource: layersSource as 'size_variant' | 'base' }
+    ...(layersSource === 'size_template_option' || layersSource === 'size_variant' || layersSource === 'base'
+      ? { layersSource: layersSource as 'size_template_option' | 'size_variant' | 'base' }
       : {}),
     ...(typeof usingBaseLayers === 'boolean'
       ? { usingBaseLayers }
@@ -899,7 +961,9 @@ function catalogSizeTemplatePayload(payload: CatalogSizeTemplatePayload): Record
     max_spine_width: payload.maxSpineWidth,
     paper_thickness_mm: payload.paperThicknessMm,
     spine_width_basis: payload.spineWidthBasis,
-    cover_safe_distance: payload.coverSafeDistance,
+    back_cover_safe_distance_json: payload.backCoverSafeDistance,
+    cover_safe_distance_json: payload.coverSafeDistance,
+    spine_safe_distance_json: payload.spineSafeDistance,
     display_unit: payload.displayUnit,
     page_count: payload.pageCount,
     page_count_options: payload.pageCountOptions,
@@ -913,7 +977,8 @@ function catalogSizeTemplatePayload(payload: CatalogSizeTemplatePayload): Record
       single_side_height: option.fields.single_side_height,
       bleed: option.fields.bleed,
       spine_width: option.fields.spine_width,
-      spine_bleed: option.fields.spine_bleed
+      spine_bleed: option.fields.spine_bleed,
+      ...(option.layers !== undefined ? { layers: fontLayoutLayerPayload(option.layers) } : {})
     })),
     size_template_info: payload.sizeTemplateInfo
   };
@@ -990,6 +1055,48 @@ function normalizeFontListPage(value: unknown): { items: FontLibraryItem[]; tota
   };
 }
 
+function toTextGenerationRule(value: unknown): TextGenerationRule {
+  const record = recordValue(namedApiValue(value, 'text_generation_rule'));
+  return {
+    id: numberValue(record.id ?? record.rule_id ?? record.ruleId),
+    name: textValue(record.name).trim(),
+    description: textValue(record.description).trim(),
+    createdAt: textValue(record.created_at ?? record.createdAt),
+    updatedAt: textValue(record.updated_at ?? record.updatedAt)
+  };
+}
+
+function normalizeTextGenerationRuleList(value: unknown): { items: TextGenerationRule[]; total: number; limit: number; offset: number } {
+  const unwrapped = unwrapApiData(value);
+  const record = recordValue(unwrapped);
+  const rawItems = Array.isArray(unwrapped)
+    ? unwrapped
+    : Array.isArray(record.items)
+      ? record.items
+      : Array.isArray(record.rules)
+        ? record.rules
+        : [];
+  const items = rawItems.map(toTextGenerationRule);
+  return {
+    items,
+    total: record.total === undefined ? items.length : numberValue(record.total),
+    limit: numberValue(record.limit) || items.length,
+    offset: numberValue(record.offset)
+  };
+}
+
+function textGenerationRulePayload(payload: TextGenerationRulePayload): Record<string, unknown> {
+  return { name: payload.name, description: payload.description };
+}
+
+async function listTextGenerationRules({ limit = 20, offset = 0, search }: { limit?: number; offset?: number; search?: string } = {}) {
+  return normalizeTextGenerationRuleList(await apiRequest<unknown>({
+    method: 'GET',
+    url: '/text-generation-rules',
+    params: { limit, offset, ...(search?.trim() ? { search: search.trim() } : {}) }
+  }));
+}
+
 function defaultUser(): LocalUserProfile {
   return {
     id: 'web-user',
@@ -1043,6 +1150,9 @@ export const browserAlbumApi = {
         specifications: payload.specifications,
         specification_field: payload.specificationField,
         common_spec_values: payload.commonSpecValues ?? [],
+        back_cover_safe_distance_json: payload.backCoverSafeDistance,
+        cover_safe_distance_json: payload.coverSafeDistance,
+        spine_safe_distance_json: payload.spineSafeDistance,
         shop_ids: payload.shopIds,
         enabled: payload.enabled ?? true
       }
@@ -1057,6 +1167,9 @@ export const browserAlbumApi = {
         ...(payload.specifications !== undefined ? { specifications: payload.specifications } : {}),
         ...(payload.specificationField !== undefined ? { specification_field: payload.specificationField } : {}),
         ...(payload.commonSpecValues !== undefined ? { common_spec_values: payload.commonSpecValues } : {}),
+        ...(payload.backCoverSafeDistance !== undefined ? { back_cover_safe_distance_json: payload.backCoverSafeDistance } : {}),
+        ...(payload.coverSafeDistance !== undefined ? { cover_safe_distance_json: payload.coverSafeDistance } : {}),
+        ...(payload.spineSafeDistance !== undefined ? { spine_safe_distance_json: payload.spineSafeDistance } : {}),
         ...(payload.shopIds !== undefined ? { shop_ids: payload.shopIds } : {}),
         ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {})
       }
@@ -1078,6 +1191,7 @@ export const browserAlbumApi = {
       data: {
         shop: payload.shop,
         shop_name: payload.shopName,
+        wecom_robot_webhook_url: payload.wecomRobotWebhookUrl ?? '',
         products: payload.products
       }
     }).then((response) => {
@@ -1092,6 +1206,7 @@ export const browserAlbumApi = {
       data: {
         shop: payload.shop,
         shop_name: payload.shopName,
+        wecom_robot_webhook_url: payload.wecomRobotWebhookUrl ?? '',
         products: payload.products
       }
     }).then((response) => {
@@ -1388,6 +1503,97 @@ export const browserAlbumApi = {
       }
     }
   },
+  innerPageTemplates: {
+    list: async (filters: { shopId?: number; productId?: number; limit?: number; offset?: number } = {}): Promise<InnerPageTemplate[]> => (
+      listItems(await apiRequest<unknown>({
+        method: 'GET',
+        url: '/inner-page-templates',
+        params: {
+          limit: filters.limit ?? 50,
+          offset: filters.offset ?? 0,
+          shop_id: filters.shopId,
+          product_id: filters.productId,
+        }
+      })).map(normalizeInnerPageTemplate)
+    ),
+    get: async (templateId: number): Promise<InnerPageTemplate> => normalizeInnerPageTemplate(await apiRequest<unknown>({
+      method: 'GET',
+      url: `/inner-page-templates/${templateId}`
+    })),
+    create: async (payload: InnerPageTemplatePayload): Promise<InnerPageTemplate> => normalizeInnerPageTemplate(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/inner-page-templates',
+      data: innerPageTemplatePayload(payload)
+    })),
+    update: async (templateId: number, payload: InnerPageTemplatePayload): Promise<InnerPageTemplate> => normalizeInnerPageTemplate(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/inner-page-templates/${templateId}`,
+      data: innerPageTemplatePayload(payload)
+    })),
+    delete: async (templateId: number): Promise<void> => {
+      await apiRequest<unknown>({ method: 'DELETE', url: `/inner-page-templates/${templateId}` });
+    },
+    sizeOptions: {
+      create: async (templateId: number, payload: InnerPageSizeOption): Promise<void> => {
+        await apiRequest<unknown>({
+          method: 'POST',
+          url: `/inner-page-templates/${templateId}/size-options`,
+          data: innerPageSizeOptionPayload(payload),
+        });
+      },
+      update: async (templateId: number, sizeOptionId: string, payload: InnerPageSizeOptionUpdatePayload): Promise<void> => {
+        await apiRequest<unknown>({
+          method: 'PATCH',
+          url: `/inner-page-templates/${templateId}/size-options/${encodeURIComponent(sizeOptionId)}`,
+          data: innerPageSizeOptionPayload(payload),
+        });
+      },
+      delete: async (templateId: number, sizeOptionId: string): Promise<void> => {
+        await apiRequest<unknown>({
+          method: 'DELETE',
+          url: `/inner-page-templates/${templateId}/size-options/${encodeURIComponent(sizeOptionId)}`,
+        });
+      },
+    },
+    uploadPreview: async (templateId: number, file: File): Promise<string> => {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      const response = await apiRequest<unknown>({
+        method: 'PUT',
+        url: `/inner-page-templates/${templateId}/preview`,
+        data: formData,
+        timeout: 120_000
+      });
+      if (typeof response === 'string' && response.trim()) return apiFileUrl(response);
+      const record = recordValue(unwrapApiData(response));
+      const unwrapped = unwrapApiData(response);
+      const value = firstValue(record, 'preview_image_path', 'previewImagePath', 'oss_url', 'file_url', 'url', 'path')
+        ?? (typeof unwrapped === 'string' ? unwrapped : undefined)
+        ?? firstValue(recordValue(unwrapped), 'preview_image_path', 'previewImagePath', 'oss_url', 'file_url', 'url', 'path');
+      const path = apiFileUrl(value);
+      if (!path) throw new Error('图片上传成功，但接口未返回 OSS 地址。');
+      return path;
+    }
+  },
+  oss: {
+    uploadImage: async (file: File): Promise<string> => {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      const response = await apiRequest<unknown>({
+        method: 'POST',
+        url: '/uploads/images',
+        data: formData,
+        timeout: 120_000
+      });
+      if (typeof response === 'string' && response.trim()) return apiFileUrl(response);
+      const unwrapped = unwrapApiData(response);
+      const record = recordValue(unwrapped);
+      const value = firstValue(record, 'url', 'oss_url', 'file_url', 'path');
+      const path = apiFileUrl(value);
+      if (!path) throw new Error('图片上传成功，但接口未返回 OSS 地址。');
+      return path;
+    }
+  },
   fontLayoutLibrary: {
     list: async (filters: { shopId?: number; productId?: number; search?: string; limit?: number; offset?: number } = {}): Promise<FontLayoutLibraryTemplate[]> => (
       listItems(await apiRequest<unknown>({
@@ -1467,7 +1673,7 @@ export const browserAlbumApi = {
           sizeOptionId: textValue(record.size_option_id ?? record.sizeOptionId ?? record.id),
           ...(textValue(record.label).trim() ? { label: textValue(record.label) } : {}),
           ...(typeof hasVariant === 'boolean' ? { hasSizeVariant: hasVariant } : {}),
-          ...(source === 'size_variant' || source === 'base' ? { layersSource: source } : {}),
+          ...(source === 'size_template_option' || source === 'size_variant' || source === 'base' ? { layersSource: source } : {}),
           ...(typeof usingBase === 'boolean' ? { usingBaseLayers: usingBase } : {}),
           ...(textValue(record.message).trim() ? { message: textValue(record.message) } : {})
         } satisfies FontLayoutSizeOptionStatus;
@@ -1665,6 +1871,24 @@ export const browserAlbumApi = {
         ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {})
       }
     }))[0]
+  },
+  textGenerationRules: {
+    listPage: listTextGenerationRules,
+    list: listTextGenerationRules,
+    get: async (ruleId: number): Promise<TextGenerationRule> => toTextGenerationRule(await apiRequest<unknown>({
+      method: 'GET',
+      url: `/text-generation-rules/${encodeURIComponent(ruleId)}`
+    })),
+    create: async (payload: TextGenerationRulePayload): Promise<TextGenerationRule> => toTextGenerationRule(await apiRequest<unknown>({
+      method: 'POST',
+      url: '/text-generation-rules',
+      data: textGenerationRulePayload(payload)
+    })),
+    update: async (ruleId: number, payload: TextGenerationRulePayload): Promise<TextGenerationRule> => toTextGenerationRule(await apiRequest<unknown>({
+      method: 'PATCH',
+      url: `/text-generation-rules/${encodeURIComponent(ruleId)}`,
+      data: textGenerationRulePayload(payload)
+    }))
   },
   exports: {
     list: async (): Promise<ExportHistoryEntry[]> => readStorage(storageKeys.exports, []),

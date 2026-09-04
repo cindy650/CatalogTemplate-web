@@ -9,6 +9,7 @@
     "build": "vite build",
     "check:image-layer-persistence": "node --experimental-strip-types scripts/check-image-layer-persistence.mjs",
     "check:inspector-layout": "node scripts/check-inspector-layout.mjs",
+    "check:product-safe-distance": "node --experimental-strip-types scripts/check-product-safe-distance-normalization.mjs",
     "check:editor-asset-default-size": "node scripts/check-editor-asset-default-size.mjs",
     "check:editor-style-scope": "node scripts/check-editor-style-scope.mjs",
     "typecheck": "tsc --noEmit",

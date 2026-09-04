@@ -1,5 +1,14 @@
-import { ArrowDownOutlined, ArrowUpOutlined, CopyOutlined, DeleteOutlined } from '@ant-design/icons';
-import { Button } from 'antd';
+import {
+	ArrowDownOutlined,
+	ArrowUpOutlined,
+	CopyOutlined,
+	DeleteOutlined,
+	EyeInvisibleOutlined,
+	EyeOutlined,
+	LockOutlined,
+	UnlockOutlined,
+} from '@ant-design/icons';
+import { Button, Tooltip } from 'antd';
 import React from 'react';
 
 import type { CanvasInstance } from '../../canvas';
@@ -11,6 +20,8 @@ type CanvasListObject = {
 	name?: string;
 	superType?: string;
 	type?: string;
+	locked?: boolean;
+	visible?: boolean;
 };
 
 interface ImageMapListProps {
@@ -37,6 +48,13 @@ export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListPr
 			}
 			return !!obj.id;
 		}) || [];
+	const updateLayer = (obj: CanvasListObject, values: Record<string, unknown>) => {
+		const handler = canvasRef?.handler;
+		if (!handler) return;
+		Object.entries(values).forEach(([key, value]) => {
+			handler.setByObject(obj as any, key, value);
+		});
+	};
 
 	return (
 		<Flex className="rde-canvas-list" style={{ height: '100%' }} flexDirection="column">
@@ -87,6 +105,47 @@ export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListPr
 								/>
 								<div className="rde-canvas-list-item-text">{title}</div>
 								<Flex className="rde-canvas-list-item-actions" flex="0 0 auto" justifyContent="flex-end">
+									<Tooltip title={obj.visible === false ? '显示图层' : '隐藏图层'}>
+										<Button
+											className={`rde-action-btn rde-layer-state-btn${obj.visible === false ? '' : ' is-active'}`}
+											type="text"
+											shape="circle"
+											disabled={isCropping}
+											icon={obj.visible === false ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+											aria-label={`${obj.visible === false ? '显示' : '隐藏'} ${title}`}
+											aria-pressed={obj.visible !== false}
+											onClick={event => {
+												event.stopPropagation();
+												updateLayer(obj, { visible: obj.visible === false });
+											}}
+										/>
+									</Tooltip>
+									<Tooltip title={obj.locked ? '解锁图层' : '锁定图层'}>
+										<Button
+											className={`rde-action-btn rde-layer-state-btn${obj.locked ? ' is-active' : ''}`}
+											type="text"
+											shape="circle"
+											disabled={isCropping}
+											icon={obj.locked ? <LockOutlined /> : <UnlockOutlined />}
+											aria-label={`${obj.locked ? '解锁' : '锁定'} ${title}`}
+											aria-pressed={Boolean(obj.locked)}
+											onClick={event => {
+												event.stopPropagation();
+												const locked = !obj.locked;
+												const isTextObject = obj.superType === 'text' || obj.type === 'textbox';
+												updateLayer(obj, {
+													lockMovementX: locked,
+													lockMovementY: locked,
+													hasControls: !locked && !isTextObject,
+													lockScalingX: isTextObject,
+													lockScalingY: isTextObject,
+													hoverCursor: locked ? 'pointer' : 'move',
+													editable: !locked,
+													locked,
+												});
+											}}
+										/>
+									</Tooltip>
 									<Button
 										className="rde-action-btn is-secondary"
 										shape="circle"
@@ -99,7 +158,7 @@ export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListPr
 										}}
 									/>
 									<Button
-									className="rde-action-btn"
+										className="rde-action-btn"
 										shape="circle"
 										danger
 										disabled={isCropping}

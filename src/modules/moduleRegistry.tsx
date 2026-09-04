@@ -46,6 +46,7 @@ export const moduleDefinitions: ModuleDefinition[] = [
     icon: <AppstoreOutlined />
   },
   { id: 'inner-pages', label: '内页模块', path: '/inner-pages', breadcrumb: ['内页模块'], icon: <BookOutlined /> },
+  { id: 'text-generation-rules', label: '模板规则描述', path: '/text-generation-rules', breadcrumb: ['模板规则描述'], icon: <FileTextOutlined /> },
   {
     id: 'size-templates',
     label: '尺寸模板',

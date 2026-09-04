@@ -1,5 +1,4 @@
 import type {
-  AlbumTemplateDocument,
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
@@ -13,19 +12,10 @@ import type {
 } from '@shared/domain';
 import type { TemplateLibraryShopSelection } from './moduleRegistry';
 
-export type ModuleId = 'orders' | 'shops' | 'inner-pages' | 'size-templates' | 'template-library' | 'fonts' | 'editor' | 'image-map-test' | 'exports' | 'account';
+export type ModuleId = 'orders' | 'shops' | 'inner-pages' | 'size-templates' | 'template-library' | 'text-generation-rules' | 'fonts' | 'editor' | 'image-map-test' | 'exports' | 'account';
 
 export type ModulePageProps = {
   setStatus(message: string): void;
-};
-
-export type EditorPageProps = ModulePageProps & {
-  orders: Order[];
-  selectedOrderId: string;
-  selectedOrder?: Order;
-  currentDocument?: AlbumTemplateDocument;
-  setCurrentDocument(document: AlbumTemplateDocument | undefined): void;
-  setSelectedOrderId(orderId: string): void;
 };
 
 export type TemplatePageProps = ModulePageProps & {
@@ -63,7 +53,7 @@ export type ShopsPageProps = {
   loading: boolean;
   loadError: string;
   reloadShops(): Promise<void>;
-  openShopOrders(shop: Shop): void;
+  openShopOrders(shop: Shop, status?: number): void;
   openShopSizeTemplates(shop: Shop): void;
 };
 
@@ -94,4 +84,5 @@ export type InnerPagesPageProps = {
   products: ProductCategory[];
   selectedShopId?: number;
   selectedProductId?: number;
+  onEditorModeChange?(editing: boolean): void;
 };

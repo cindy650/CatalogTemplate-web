@@ -24,6 +24,7 @@ import ImageMapFontLayouts, {
 	type ImageMapFontLayoutDeleter,
 	type ImageMapFontLayoutLayerData,
 	type ImageMapFontLayoutLoader,
+	type ImageMapFontLayoutProductLoader,
 	type ImageMapFontLayoutOption,
 	type ImageMapFontLayoutSizeOption,
 	type ImageMapFontLayoutSizeOptionLoader,
@@ -44,6 +45,7 @@ import {
 } from './ImageMapSizeScheme';
 import ImageMapTitle from './ImageMapTitle';
 import { serializeImageLayer } from '../../canvas/utils/imageSource';
+import type { ImageMapTextGenerationRule } from './properties/GeneralProperty';
 
 const propertiesToInclude = [
 	'id',
@@ -65,9 +67,16 @@ const propertiesToInclude = [
 	'sideWidth',
 	'sideHeight',
 	'bleed',
+	'separateBleed',
+	'horizontalBleed',
+	'verticalBleed',
 	'spineWidth',
 	'spineBleed',
+	'canvasRows',
+	'canvasRowGap',
 	'printGuides',
+	'horizontalCentered',
+	'verticalCentered',
 	'videoLoadType',
 	'autoplay',
 	'shadow',
@@ -81,6 +90,8 @@ const propertiesToInclude = [
 	'points',
 	'svg',
 	'loadType',
+	'imageLoadType',
+	'innerPage',
 ];
 
 const defaultOption: any = {
@@ -120,6 +131,7 @@ const assetDescriptorTypes: Record<string, ReadonlySet<string>> = {
 	TEXT: new Set(['textbox']),
 	IMAGE: new Set(['image']),
 	SHAPE: new Set(['triangle', 'rect', 'circle']),
+	DRAWING: new Set(['polygon']),
 	SVG: new Set(['svg']),
 };
 
@@ -152,6 +164,8 @@ interface ImageMapEditorState {
 	fontFamiliesError: string;
 	fontFamiliesLoading: boolean;
 	fontLayoutFontsLoading: boolean;
+	fontLayoutLayersLoading: boolean;
+	objectMeasurementRevision: number;
 	editing: boolean;
 	descriptors: DescriptorMap;
 	objects?: any[];
@@ -159,6 +173,8 @@ interface ImageMapEditorState {
 	sizeSchemes: ImageMapSizeSchemeValue[];
 	activeSizeSchemeId: string;
 	savingDocument: boolean;
+	textGenerationRules: ImageMapTextGenerationRule[];
+	textGenerationRulesLoading: boolean;
 }
 
 export interface ImageMapEditorDocumentValue {
@@ -170,6 +186,8 @@ export interface ImageMapEditorDocumentValue {
 
 export interface ImageMapEditorProps {
 	shops?: ImageMapShopOption[];
+	/** Product used as the default font-layout filter when the editor is opened. */
+	initialProductId?: ImageMapShopValue;
 	initialBasicInfo?: Partial<ImageMapBasicInfoValue>;
 	templatePreviewImage?: string;
 	/** Initial Fabric document supplied by the embedding page. */
@@ -179,13 +197,16 @@ export interface ImageMapEditorProps {
 	initialActiveSizeSchemeId?: string;
 	selectedFontLayoutId?: number;
 	onSizeSchemesChange?: (value: ImageMapSizeSchemeValue[]) => void;
+	onSizeSchemeLayersChange?: (sizeOptionId: string, layers: ImageMapFontLayoutLayerData) => void;
 	onSaveSizeSchemes?: (value: ImageMapSizeSchemeValue[], activeSizeSchemeId: string, layers?: ImageMapFontLayoutLayerData, fontLayoutId?: number) => void | Promise<void>;
 	createFontLayout?: ImageMapFontLayoutCreator;
 	deleteFontLayout?: ImageMapFontLayoutDeleter;
 	loadFontLayoutCategories?: ImageMapFontLayoutCategoryLoader;
+	loadFontLayoutProducts?: ImageMapFontLayoutProductLoader;
 	loadFontLayouts?: ImageMapFontLayoutLoader;
 	loadFontLayoutSizeOptions?: ImageMapFontLayoutSizeOptionLoader;
 	loadFontLayoutSize?: ImageMapFontLayoutSizeLoader;
+	loadSizeSchemeLayers?: (sizeOptionId: string) => Promise<ImageMapFontLayoutLayerData | undefined>;
 	loadTextFonts?: (search: string) => Promise<Array<{
 		id: string;
 		family: string;
@@ -193,6 +214,7 @@ export interface ImageMapEditorProps {
 		filePath: string;
 		aliases?: string[];
 	}>>;
+	loadTextGenerationRules?: () => Promise<ImageMapTextGenerationRule[]>;
 	applyTextFont?: (family: string, filePath: string) => Promise<void>;
 	saveFontLayout?: ImageMapFontLayoutSaver;
 	sizeOptions?: ImageMapFontLayoutSizeOption[];
@@ -205,6 +227,8 @@ export interface ImageMapEditorProps {
 	saveConfirmTitle?: string;
 	alwaysEnableSave?: boolean;
 	hiddenActivities?: ImageMapEditorActivity[];
+	/** Use a plain single-page workarea instead of cover/spine geometry. */
+	innerPageMode?: boolean;
 	onExit?: () => void;
 	exitLabel?: string;
 }
@@ -250,6 +274,8 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 	private fontAssets = new Map<string, string>();
 	private fontSearchCache = new Map<string, ImageMapEditorState['fontOptions']>();
 	private textFontSelectionRequestIds = new Map<string, number>();
+	private textGenerationRulesRequest?: Promise<void>;
+	private textGenerationRulesRequestId = 0;
 	private fontLayoutLoadCount = 0;
 	private selectedFontLayoutId: ImageMapFontLayoutOption['id'] | undefined = this.props.selectedFontLayoutId;
 	private sizeLayoutRequestId = 0;
@@ -274,6 +300,8 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		fontFamiliesError: '',
 		fontFamiliesLoading: false,
 		fontLayoutFontsLoading: false,
+		fontLayoutLayersLoading: false,
+		objectMeasurementRevision: 0,
 		editing: false,
 		descriptors: {},
 		objects: undefined,
@@ -281,34 +309,86 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		sizeSchemes: this.initialSizeSchemes,
 		activeSizeSchemeId: this.initialActiveSizeSchemeId,
 		savingDocument: false,
+		textGenerationRules: [],
+		textGenerationRulesLoading: false,
 	};
 
 	setCanvasRef = (ref: CanvasInstance | null) => {
 		this.canvasRef = ref;
 	};
 
-	handleCanvasLoad = (handler: CanvasInstance['handler']) => {
+			handleCanvasLoad = (handler: CanvasInstance['handler']) => {
 		if (this.initialSizeSchemeApplied) return;
 		this.initialSizeSchemeApplied = true;
 		const activeSizeScheme = this.state.sizeSchemes.find(
 			item => item.id === this.state.activeSizeSchemeId,
 		);
 		if (activeSizeScheme) {
-			handler.workareaHandler.setPrintDimensions({
-				...activeSizeScheme,
-				spineWidth: resolveImageMapSpineWidth(activeSizeScheme),
-			});
-			const initialLoad = this.props.initialLayers
-				? this.importFontLayoutLayers(this.props.initialLayers, true, handler)
-				: this.loadActiveSizeSchemeFontLayout();
+			let initialLoad: Promise<void>;
+			if (this.props.initialLayers) {
+				this.setState({ fontLayoutLayersLoading: true });
+				initialLoad = this.importFontLayoutLayers(this.props.initialLayers, true, handler, activeSizeScheme);
+			} else if (this.props.loadSizeSchemeLayers) {
+				this.setState({ fontLayoutLayersLoading: true });
+				initialLoad = this.loadActiveSizeSchemeLayers(handler);
+			} else if (
+				this.selectedFontLayoutId !== undefined
+				&& this.props.sizeTemplateId !== undefined
+				&& this.props.loadFontLayoutSize
+			) {
+				initialLoad = this.loadActiveSizeSchemeFontLayout();
+			} else {
+				if (this.props.innerPageMode) {
+					handler.workareaHandler.setInnerPageSize(activeSizeScheme);
+				} else {
+					handler.workareaHandler.setPrintDimensions({
+						...activeSizeScheme,
+						spineWidth: resolveImageMapSpineWidth(activeSizeScheme),
+						canvasRows: 1,
+					});
+				}
+				initialLoad = Promise.resolve();
+			}
 			void initialLoad.catch(error => {
 				void message.error(error instanceof Error ? error.message : String(error));
 			}).finally(() => {
-				this.scheduleInitialFitCanvas(handler);
+				this.scheduleInitialFitCanvas(handler, () => {
+					this.setState({ fontLayoutLayersLoading: false });
+				});
 			});
 		} else {
-			this.scheduleInitialFitCanvas(handler);
+			this.scheduleInitialFitCanvas(handler, () => {
+				this.setState({ fontLayoutLayersLoading: false });
+			});
 		}
+	};
+
+	loadActiveSizeSchemeLayers = async (handlerOverride?: CanvasInstance['handler']) => {
+		const sizeScheme = this.state.sizeSchemes.find(item => item.id === this.state.activeSizeSchemeId);
+		if (!sizeScheme) return;
+		if (sizeScheme.idIsPersisted === false) {
+			const handler = handlerOverride ?? this.canvasRef?.handler;
+			handler?.clear(false);
+			if (handler && this.props.innerPageMode) handler.workareaHandler.setInnerPageSize(sizeScheme);
+			else handler?.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
+			return;
+		}
+		const directLayers = await this.props.loadSizeSchemeLayers?.(sizeScheme.id);
+		if (directLayers !== undefined) {
+			await this.importFontLayoutLayers(directLayers, true, handlerOverride, sizeScheme);
+			return;
+		}
+		if (
+			this.selectedFontLayoutId !== undefined
+			&& this.props.sizeTemplateId !== undefined
+			&& this.props.loadFontLayoutSize
+		) {
+			await this.loadActiveSizeSchemeFontLayout();
+			return;
+		}
+		const handler = handlerOverride ?? this.canvasRef?.handler;
+		if (handler && this.props.innerPageMode) handler.workareaHandler.setInnerPageSize(sizeScheme);
+		else handler?.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
 	};
 
 	loadActiveSizeSchemeFontLayout = async () => {
@@ -318,12 +398,18 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		const loadFontLayoutSize = this.props.loadFontLayoutSize;
 		if (layoutId === undefined || sizeTemplateId === undefined || !sizeScheme || !loadFontLayoutSize) return;
 		const requestId = ++this.sizeLayoutRequestId;
+		this.setState({ fontLayoutLayersLoading: true });
 		const result = await loadFontLayoutSize(layoutId, sizeTemplateId, sizeScheme.id);
 		if (requestId !== this.sizeLayoutRequestId || !this.canvasRef) return;
 		await this.importFontLayoutLayers(result.layers);
+		if (result.message) {
+			message.info(result.message);
+		} else if (result.usingBaseLayers || result.layersSource === 'base') {
+			message.info('当前规格暂无独立图层数据，已使用基础字体布局模板');
+		}
 	};
 
-	scheduleInitialFitCanvas = (handler: CanvasInstance['handler']) => {
+	scheduleInitialFitCanvas = (handler: CanvasInstance['handler'], onComplete?: () => void) => {
 		if (this.fitCanvasTimer !== undefined) {
 			window.clearTimeout(this.fitCanvasTimer);
 		}
@@ -332,6 +418,8 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			handler.zoomHandler.zoomToFit();
 			const center = handler.canvas.getCenterPoint();
 			handler.zoomHandler.zoomToPoint(center, handler.canvas.getZoom() * 0.96);
+			handler.canvas.requestRenderAll();
+			onComplete?.();
 		}, 500);
 	};
 
@@ -351,6 +439,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 
 	componentWillUnmount() {
 		this.textFontRequestId += 1;
+		this.textGenerationRulesRequestId += 1;
 		this.textFontSelectionRequestIds.clear();
 		this.sizeLayoutRequestId += 1;
 		if (this.fitCanvasTimer !== undefined) {
@@ -383,7 +472,31 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			this.fontAssets.clear();
 			this.setState({ fontOptions: [], fontFamiliesError: '', fontFamiliesLoading: false });
 		}
+		if (prevProps.loadTextGenerationRules !== this.props.loadTextGenerationRules) {
+			this.textGenerationRulesRequestId += 1;
+			this.textGenerationRulesRequest = undefined;
+			this.setState({ textGenerationRules: [], textGenerationRulesLoading: false });
+		}
 	}
+
+	loadTextGenerationRules = async () => {
+		const loader = this.props.loadTextGenerationRules;
+		if (!loader || this.state.textGenerationRules.length || this.textGenerationRulesRequest) return this.textGenerationRulesRequest;
+		const requestId = ++this.textGenerationRulesRequestId;
+		this.setState({ textGenerationRulesLoading: true });
+		const request = loader()
+			.then(rules => {
+				if (requestId === this.textGenerationRulesRequestId) this.setState({ textGenerationRules: rules, textGenerationRulesLoading: false });
+			})
+			.catch(() => {
+				if (requestId === this.textGenerationRulesRequestId) this.setState({ textGenerationRules: [], textGenerationRulesLoading: false });
+			})
+			.finally(() => {
+				if (requestId === this.textGenerationRulesRequestId) this.textGenerationRulesRequest = undefined;
+			});
+		this.textGenerationRulesRequest = request;
+		return request;
+	};
 
 	loadTextFonts = async (search: string) => {
 		const requestId = ++this.textFontRequestId;
@@ -504,6 +617,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 					}
 				});
 				this.setState({ selectedItem: target });
+				if (target.superType === 'text' || target.type === 'textbox') void this.loadTextGenerationRules();
 				if ((target.superType === 'text' || target.type === 'textbox') && typeof target.fontFamily === 'string' && target.fontFamily.trim()) {
 					void this.loadTextFonts(target.fontFamily);
 				}
@@ -525,7 +639,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		},
 		onModified: debounce(() => {
 			const { editing } = this.state;
-			this.forceUpdate();
+			this.setState(state => ({ objectMeasurementRevision: state.objectMeasurementRevision + 1 }));
 			if (!editing) {
 				this.changeEditing(true);
 			}
@@ -535,6 +649,9 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		},
 		onExportError: (format: 'svg', error: Error) => {
 			if (format === 'svg') void message.error(`SVG 导出失败：${error.message}`);
+		},
+		onExportWarning: (warnings: string[]) => {
+			warnings.forEach(warning => void message.warning(warning, 5));
 		},
 		onChange: (selectedItem: any, changedValues: Record<string, any>, allValues: Record<string, any>) => {
 			const { editing } = this.state;
@@ -548,12 +665,24 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				return;
 			}
 			if (changedKey === 'width' || changedKey === 'height') {
-				this.canvasRef?.handler.scaleToResize(allValues.width, allValues.height);
+				const isShape = ['rect', 'triangle', 'circle'].includes(String(selectedItem?.type || '').toLowerCase());
+				const unit = this.canvasRef?.handler.workarea?.unit;
+				const factor = unit === 'cm' ? 96 / 2.54 : unit === 'mm' ? 96 / 25.4 : 96;
+				this.canvasRef?.handler.scaleToResize(
+					isShape ? Number(allValues.width) * factor : allValues.width,
+					isShape ? Number(allValues.height) * factor : allValues.height,
+				);
 				return;
 			}
 			if (changedKey === 'angle') {
 				this.canvasRef?.handler.rotate(allValues.angle);
 				return;
+			}
+			if (changedKey === 'left') {
+				selectedItem.set('horizontalCentered', false);
+			}
+			if (changedKey === 'top') {
+				selectedItem.set('verticalCentered', false);
 			}
 			if (changedKey === 'locked') {
 				const isTextObject = selectedItem?.superType === 'text' || selectedItem?.type === 'textbox';
@@ -734,8 +863,14 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				this.canvasRef?.handler.workareaHandler.setImage(changedValue);
 				return;
 			}
-			if (['unit', 'sideWidth', 'sideHeight', 'bleed', 'spineWidth', 'spineBleed', 'paperThickness'].includes(changedKey)) {
+			if (this.props.innerPageMode && ['unit', 'sideWidth', 'sideHeight'].includes(changedKey)) {
+				this.canvasRef?.handler.workareaHandler.setInnerPageSize(allValues);
+				this.forceUpdate();
+				return;
+			}
+			if (['unit', 'sideWidth', 'sideHeight', 'bleed', 'horizontalBleed', 'verticalBleed', 'spineWidth', 'spineBleed', 'paperThickness'].includes(changedKey)) {
 				this.canvasRef?.handler.workareaHandler.setPrintDimensions(allValues);
+				this.forceUpdate();
 				return;
 			}
 			if (changedKey === 'width' || changedKey === 'height') {
@@ -930,7 +1065,13 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		},
 		onDownload: () => {
 			this.showLoading(true);
-			const objects = this.canvasRef?.handler.exportJSON().filter(obj => !!obj.id) || [];
+			const exportCheck = this.prepareTextLayersForExport();
+			if (exportCheck.warnings.length) this.canvasHandlers.onExportWarning(exportCheck.warnings);
+			if (exportCheck.blocked) {
+				this.showLoading(false);
+				return;
+			}
+			const objects = exportCheck.objects.filter(obj => !!obj.id);
 			const { basicInfo, animations, styles, dataSources } = this.state;
 			const exportDatas = {
 				objects,
@@ -971,16 +1112,19 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				format: 'png',
 				quality: 1,
 			});
+			this.refreshInspectorAfterExport();
 		},
 		onSaveSVG: () => {
 			this.canvasRef?.handler.saveCanvasSVG({
 				name: this.state.basicInfo.templateName || '画布',
 			});
+			this.refreshInspectorAfterExport();
 		},
 		onSaveTextToSVG: () => {
-			void this.canvasRef?.handler.saveCanvasTextToSVG({
+			const exportPromise = this.canvasRef?.handler.saveCanvasTextToSVG({
 				name: this.state.basicInfo.templateName || '画布',
 			});
+			void Promise.resolve(exportPromise).finally(() => this.refreshInspectorAfterExport());
 		},
 		onActivityChange: (activeActivity: string) => {
 			this.setState({ activeActivity });
@@ -993,10 +1137,10 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			this.props.onBasicInfoChange?.(basicInfo);
 		},
 		onAddSizeScheme: () => {
-			const workarea = this.canvasRef?.handler.workarea;
 			const activeSizeScheme = this.state.sizeSchemes.find(
 				item => item.id === this.state.activeSizeSchemeId,
 			);
+			const workarea = this.canvasRef?.handler.workarea;
 			let nextSizeSchemeNumber = this.state.sizeSchemes.length + 1;
 			let nextSizeSchemeLabel = `新规格 ${nextSizeSchemeNumber}`;
 			while (this.state.sizeSchemes.some(item => (
@@ -1006,17 +1150,32 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				nextSizeSchemeLabel = `新规格 ${nextSizeSchemeNumber}`;
 			}
 			const nextSizeScheme = createImageMapSizeScheme({
-				...activeSizeScheme,
+				...(this.props.innerPageMode ? {
+					unit: 'in',
+					sideWidth: 9,
+					sideHeight: 6,
+					bleed: 0,
+					spineWidth: 0,
+					spineBleed: 0,
+					pageCount: 1,
+					pageCountOptions: [1],
+				} : activeSizeScheme),
 				id: undefined,
 				idIsPersisted: false,
 				label: nextSizeSchemeLabel,
-				unit: workarea?.unit ?? activeSizeScheme?.unit,
-				sideWidth: workarea?.sideWidth ?? activeSizeScheme?.sideWidth,
-				sideHeight: workarea?.sideHeight ?? activeSizeScheme?.sideHeight,
-				bleed: workarea?.bleed ?? activeSizeScheme?.bleed,
-				spineWidth: activeSizeScheme?.spineWidth ?? workarea?.spineWidth,
-				spineBleed: workarea?.spineBleed ?? activeSizeScheme?.spineBleed,
-				paperThickness: activeSizeScheme?.paperThickness,
+				...(this.props.innerPageMode ? {} : {
+					unit: workarea?.unit ?? activeSizeScheme?.unit,
+					sideWidth: workarea?.sideWidth ?? activeSizeScheme?.sideWidth,
+					sideHeight: workarea?.sideHeight ?? activeSizeScheme?.sideHeight,
+					bleed: workarea?.bleed ?? activeSizeScheme?.bleed,
+					separateBleed: activeSizeScheme?.separateBleed ?? workarea?.separateBleed,
+					horizontalBleed: activeSizeScheme?.horizontalBleed ?? workarea?.horizontalBleed ?? workarea?.bleed ?? activeSizeScheme?.bleed,
+					verticalBleed: activeSizeScheme?.verticalBleed ?? workarea?.verticalBleed ?? workarea?.bleed ?? activeSizeScheme?.bleed,
+					canvasRowGap: workarea?.canvasRowGap ?? activeSizeScheme?.canvasRowGap,
+					spineWidth: activeSizeScheme?.spineWidth ?? workarea?.spineWidth,
+					spineBleed: workarea?.spineBleed ?? activeSizeScheme?.spineBleed,
+					paperThickness: activeSizeScheme?.paperThickness,
+				}),
 			});
 			const sizeSchemes = [...this.state.sizeSchemes, nextSizeScheme];
 			this.changeEditing(true);
@@ -1030,11 +1189,15 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			});
 			// A new size starts with an empty variant. Keep the workarea, but remove
 			// all content so the old size's layers cannot be saved accidentally.
+			this.sizeLayoutRequestId += 1;
 			this.canvasRef?.handler.clear(false);
-			this.canvasRef?.handler.workareaHandler.setPrintDimensions({
-				...nextSizeScheme,
-				spineWidth: resolveImageMapSpineWidth(nextSizeScheme),
-			});
+			if (this.props.innerPageMode) {
+				// Workarea is intentionally retained for the new canvas, but its
+				// background image belongs to the previous size and must not leak.
+				void this.canvasRef?.handler.workareaHandler.setImage('', true);
+				this.canvasRef?.handler.workareaHandler.setInnerPageSize(nextSizeScheme);
+			}
+			else this.canvasRef?.handler.workareaHandler.setPrintDimensions({ ...nextSizeScheme, spineWidth: resolveImageMapSpineWidth(nextSizeScheme) });
 			this.props.onSizeSchemesChange?.(sizeSchemes);
 		},
 		onSaveSizeScheme: (values: Omit<ImageMapSizeSchemeValue, 'id'>) => {
@@ -1073,10 +1236,17 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				activeSizeSchemeId: savedSizeScheme.id,
 			}, () => {
 				this.props.onSizeSchemesChange?.(sizeSchemes);
+				let layers: ImageMapFontLayoutLayerData;
+				try {
+					layers = this.getCanvasFontLayoutLayers(true);
+				} catch (error) {
+					void message.error(error instanceof Error ? error.message : String(error));
+					return;
+				}
 				void Promise.resolve(this.props.onSaveSizeSchemes?.(
 					sizeSchemes,
 					savedSizeScheme.id,
-					this.getCanvasFontLayoutLayers(),
+					layers,
 					typeof this.selectedFontLayoutId === 'number' ? this.selectedFontLayoutId : undefined,
 				)).then(() => {
 					this.changeEditing(false);
@@ -1106,10 +1276,8 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				activeSizeSchemeId: nextActiveSizeScheme?.id ?? sizeSchemes[0].id,
 			}, () => {
 				if (deletingActive && nextActiveSizeScheme) {
-					this.canvasRef?.handler.workareaHandler.setPrintDimensions({
-						...nextActiveSizeScheme,
-						spineWidth: resolveImageMapSpineWidth(nextActiveSizeScheme),
-					});
+					if (this.props.innerPageMode) this.canvasRef?.handler.workareaHandler.setInnerPageSize(nextActiveSizeScheme);
+					else this.canvasRef?.handler.workareaHandler.setPrintDimensions({ ...nextActiveSizeScheme, spineWidth: resolveImageMapSpineWidth(nextActiveSizeScheme) });
 				}
 			});
 			this.props.onSizeSchemesChange?.(sizeSchemes);
@@ -1128,20 +1296,63 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			if (!sizeScheme) {
 				return;
 			}
+			if (this.state.activeSizeSchemeId !== activeSizeSchemeId) {
+				this.props.onSizeSchemeLayersChange?.(this.state.activeSizeSchemeId, this.getCanvasFontLayoutLayers());
+			}
 			this.changeEditing(true);
 			this.setState({ activeSizeSchemeId });
-			this.canvasRef?.handler.workareaHandler.setPrintDimensions({
-				...sizeScheme,
-				spineWidth: resolveImageMapSpineWidth(sizeScheme),
-			});
 			const layoutId = this.selectedFontLayoutId;
 			const sizeTemplateId = this.props.sizeTemplateId;
 			const loadFontLayoutSize = this.props.loadFontLayoutSize;
-			if (layoutId === undefined || sizeTemplateId === undefined || !loadFontLayoutSize) return;
+			if (this.props.loadSizeSchemeLayers) {
+				const requestId = ++this.sizeLayoutRequestId;
+				this.setState({ fontLayoutLayersLoading: true });
+				void this.props.loadSizeSchemeLayers(sizeScheme.id).then(async directLayers => {
+					if (requestId !== this.sizeLayoutRequestId || !this.canvasRef) return;
+					if (sizeScheme.idIsPersisted === false) {
+						this.canvasRef.handler.clear(false);
+						if (this.props.innerPageMode) this.canvasRef.handler.workareaHandler.setInnerPageSize(sizeScheme);
+						else this.canvasRef.handler.workareaHandler.setPrintDimensions({
+							...sizeScheme,
+							spineWidth: resolveImageMapSpineWidth(sizeScheme),
+							canvasRows: 1,
+						});
+						return;
+					}
+					if (directLayers !== undefined) {
+						await this.importFontLayoutLayers(directLayers, false, undefined, sizeScheme);
+						return;
+					}
+					if (layoutId !== undefined && sizeTemplateId !== undefined && loadFontLayoutSize) {
+						const result = await loadFontLayoutSize(layoutId, sizeTemplateId, sizeScheme.id);
+						if (requestId !== this.sizeLayoutRequestId || !this.canvasRef) return;
+						await this.importFontLayoutLayers(result.layers, false, undefined, sizeScheme);
+						if (result.message) message.info(result.message);
+						else if (result.usingBaseLayers || result.layersSource === 'base') message.info('当前规格暂无独立图层数据，已使用基础字体布局模板');
+						return;
+					}
+					if (this.props.innerPageMode) this.canvasRef.handler.workareaHandler.setInnerPageSize(sizeScheme);
+					else this.canvasRef.handler.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
+				}).catch(error => {
+					if (requestId === this.sizeLayoutRequestId) message.error(error instanceof Error ? error.message : String(error));
+				}).finally(() => {
+					if (requestId === this.sizeLayoutRequestId) {
+						this.canvasRef?.handler.canvas.requestRenderAll();
+						this.setState({ fontLayoutLayersLoading: false });
+					}
+				});
+				return;
+			}
+			if (layoutId === undefined || sizeTemplateId === undefined || !loadFontLayoutSize) {
+				if (this.props.innerPageMode) this.canvasRef?.handler.workareaHandler.setInnerPageSize(sizeScheme);
+				else this.canvasRef?.handler.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
+				return;
+			}
 			const requestId = ++this.sizeLayoutRequestId;
+			this.setState({ fontLayoutLayersLoading: true });
 			void loadFontLayoutSize(layoutId, sizeTemplateId, sizeScheme.id).then(result => {
 				if (requestId !== this.sizeLayoutRequestId || !this.canvasRef) return;
-				return this.importFontLayoutLayers(result.layers).then(() => {
+				return this.importFontLayoutLayers(result.layers, false, undefined, sizeScheme).then(() => {
 					if (result.message) {
 						message.info(result.message);
 					} else if (result.usingBaseLayers || result.layersSource === 'base') {
@@ -1151,6 +1362,16 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			}).catch(error => {
 				if (requestId === this.sizeLayoutRequestId) {
 					void message.error(error instanceof Error ? error.message : String(error));
+				}
+			}).finally(() => {
+				if (requestId === this.sizeLayoutRequestId) {
+					this.canvasRef?.handler.canvas.requestRenderAll();
+					const finishLoading = () => this.setState({ fontLayoutLayersLoading: false });
+					if (typeof window.requestAnimationFrame === 'function') {
+						window.requestAnimationFrame(finishLoading);
+					} else {
+						finishLoading();
+					}
 				}
 			});
 		},
@@ -1162,22 +1383,74 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		this.setState({ loading });
 	};
 
+	/** Refresh inspector values after export-time text fitting mutates Fabric objects. */
+	refreshInspectorAfterExport = () => {
+		this.setState(state => ({ objectMeasurementRevision: state.objectMeasurementRevision + 1 }));
+	};
+
+	prepareTextLayersForExport = () => {
+		const result = this.canvasRef?.handler.prepareTextLayersForExport()
+			|| { warnings: [], blocked: false, objects: [] };
+		this.refreshInspectorAfterExport();
+		return result;
+	};
+
 	changeEditing = (editing: boolean) => {
 		this.setState({ editing });
 	};
 
-	getCanvasFontLayoutLayers = (): ImageMapFontLayoutLayerData => {
+	getCanvasFontLayoutLayers = (prepareText = false): ImageMapFontLayoutLayerData => {
 		const canvasRef = this.canvasRef;
-		const serializedObjects = (canvasRef?.handler.exportJSON().filter(obj => !!obj.id) || [])
-			.map(object => serializeImageLayer(object));
+		const exportCheck = prepareText
+			? canvasRef?.handler.prepareTextLayersForExport()
+			: undefined;
+		if (prepareText) this.refreshInspectorAfterExport();
+		if (exportCheck?.warnings.length) this.canvasHandlers.onExportWarning(exportCheck.warnings);
+		if (exportCheck?.blocked) throw new Error('存在文字图层超出安全区域，已阻止保存');
+		const canvasObjects = exportCheck?.objects ?? canvasRef?.handler.exportJSON() ?? [];
+		const serializedObjects = canvasObjects.filter(obj => !!obj.id)
+			.map(object => serializeImageLayer(object, { preserveWorkareaSource: Boolean(this.props.innerPageMode) }));
 		return {
 			// Persist Fabric's original scene coordinates. The workarea remains
 			// part of the document for preview cropping, but is not API canvas
 			// configuration and must not be used to overwrite the active editor.
-			objects: serializedObjects,
+			objects: this.props.innerPageMode
+				? serializedObjects.map(object => object.id === 'workarea' ? { ...object, innerPage: true } : object)
+				: serializedObjects,
 			animations: this.state.animations,
 			styles: this.state.styles,
 			dataSources: this.state.dataSources,
+		};
+	};
+
+	createEmptyCanvasLayers = (canvasRows: 1 | 2): ImageMapFontLayoutLayerData => {
+		const handler = this.canvasRef?.handler;
+		const sizeScheme = this.state.sizeSchemes.find(item => item.id === this.state.activeSizeSchemeId);
+		if (!handler || !sizeScheme) {
+			return { objects: [], animations: [], styles: [], dataSources: [] };
+		}
+		const workarea = this.getCanvasFontLayoutLayers().objects.find(object => object.id === 'workarea');
+		if (!workarea) {
+			return { objects: [], animations: [], styles: [], dataSources: [] };
+		}
+		const dimensions = handler.workareaHandler.getPrintDimensionData({
+			...sizeScheme,
+			spineWidth: canvasRows === 2 ? 0 : resolveImageMapSpineWidth(sizeScheme),
+			spineBleed: canvasRows === 2 ? 0 : sizeScheme.spineBleed,
+			canvasRows,
+		});
+		return {
+			objects: [{
+				...workarea,
+				...dimensions,
+				width: dimensions.workareaWidth,
+				height: dimensions.workareaHeight,
+				scaleX: 1,
+				scaleY: 1,
+			}],
+			animations: [],
+			styles: [],
+			dataSources: [],
 		};
 	};
 
@@ -1185,7 +1458,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		basicInfo: this.state.basicInfo,
 		sizeSchemes: this.state.sizeSchemes,
 		activeSizeSchemeId: this.state.activeSizeSchemeId,
-		layers: this.getCanvasFontLayoutLayers(),
+		layers: this.getCanvasFontLayoutLayers(true),
 	});
 
 	saveEditorDocument = async (previewFile?: File): Promise<boolean> => {
@@ -1253,15 +1526,46 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		layers: ImageMapFontLayoutLayerData,
 		applyWorkareaAppearance = false,
 		handlerOverride?: CanvasInstance['handler'],
+		sizeSchemeOverride?: ImageMapSizeSchemeValue,
 	) => {
 		const handler = handlerOverride ?? this.canvasRef?.handler;
 		if (!handler) return;
 		const viewportTransform = [...handler.canvas.viewportTransform] as typeof handler.canvas.viewportTransform;
-		// Layout APIs contain content in the original Fabric scene coordinate
-		// system. Ignore any returned workarea object or canvas metadata so the
-		// currently selected size remains the editor's source of truth.
+		// The selected size remains authoritative for physical dimensions. The
+		// layout workarea contributes only its visual row count and appearance.
 		const layerObjects = Array.isArray(layers.objects) ? layers.objects : [];
 		const serializedWorkarea = layerObjects.find(object => object.id === 'workarea');
+		const activeSizeScheme = sizeSchemeOverride
+			?? this.state.sizeSchemes.find(item => item.id === this.state.activeSizeSchemeId);
+		if (this.props.innerPageMode && activeSizeScheme) {
+			handler.workareaHandler.setInnerPageSize(activeSizeScheme);
+		} else if (activeSizeScheme) {
+			const usesSeparateBleed = serializedWorkarea?.separateBleed === true || activeSizeScheme.separateBleed === true;
+			const restoredSizeScheme = usesSeparateBleed ? {
+				...activeSizeScheme,
+				separateBleed: true,
+				// Physical bleed belongs to the selected size scheme. A font layout's
+				// workarea may contain legacy single-row values and must not halve or
+				// otherwise overwrite the scheme's per-row bleed settings.
+				horizontalBleed: Number(activeSizeScheme.horizontalBleed ?? activeSizeScheme.bleed),
+				verticalBleed: Number(activeSizeScheme.verticalBleed ?? activeSizeScheme.bleed),
+			} : activeSizeScheme;
+			handler.workareaHandler.setPrintDimensions({
+				...restoredSizeScheme,
+				spineWidth: resolveImageMapSpineWidth(restoredSizeScheme),
+					canvasRows: serializedWorkarea?.canvasRows === 2 ? 2 : 1,
+					canvasRowGap: Number(serializedWorkarea?.canvasRowGap ?? activeSizeScheme.canvasRowGap ?? 0),
+			});
+			if (usesSeparateBleed && (
+				activeSizeScheme.separateBleed !== true
+				|| activeSizeScheme.horizontalBleed !== restoredSizeScheme.horizontalBleed
+				|| activeSizeScheme.verticalBleed !== restoredSizeScheme.verticalBleed
+			)) {
+				this.setState(state => ({
+					sizeSchemes: state.sizeSchemes.map(item => item.id === restoredSizeScheme.id ? restoredSizeScheme : item),
+				}));
+			}
+		}
 		if (applyWorkareaAppearance && serializedWorkarea) {
 			const source = typeof serializedWorkarea.src === 'string' ? serializedWorkarea.src : '';
 			if (source) {
@@ -1306,8 +1610,17 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 	applyFontLayout = async (layout: ImageMapFontLayoutOption) => {
 		if (!this.canvasRef) return;
 		this.selectedFontLayoutId = layout.id;
-		await this.importFontLayoutLayers(layout.layers);
-		this.setState({ editing: true });
+		this.setState({ fontLayoutLayersLoading: true });
+		try {
+			await this.importFontLayoutLayers(layout.layers);
+			this.setState({ editing: true });
+			this.canvasRef.handler.canvas.requestRenderAll();
+			if (typeof window.requestAnimationFrame === 'function') {
+				await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+			}
+		} finally {
+			this.setState({ fontLayoutLayersLoading: false });
+		}
 	};
 
 	render() {
@@ -1326,7 +1639,11 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			fontOptions,
 			fontFamiliesError,
 			fontFamiliesLoading,
+			textGenerationRules,
+			textGenerationRulesLoading,
 			fontLayoutFontsLoading,
+			fontLayoutLayersLoading,
+			objectMeasurementRevision,
 			objects,
 			activeActivity,
 			sizeSchemes,
@@ -1517,6 +1834,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 							onDeleteSizeScheme={onDeleteSizeScheme}
 							onSaveSizeScheme={onSaveSizeScheme}
 							onSelectSizeScheme={onSelectSizeScheme}
+							innerPageMode={this.props.innerPageMode}
 						/>
 					) : activeActivity === 'assets' ? (
 						<ImageMapItems
@@ -1535,9 +1853,12 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 							shops={this.props.shops ?? []}
 							defaultShopId={basicInfo.shopId}
 							createFontLayout={this.props.createFontLayout}
+							createEmptyCanvasLayers={this.createEmptyCanvasLayers}
 							deleteFontLayout={this.props.deleteFontLayout}
-							getCanvasLayers={this.getCanvasFontLayoutLayers}
+							getCanvasLayers={() => this.getCanvasFontLayoutLayers(true)}
 							loadFontLayoutCategories={this.props.loadFontLayoutCategories}
+							loadFontLayoutProducts={this.props.loadFontLayoutProducts}
+							defaultProductId={this.props.initialProductId}
 							loadFontLayouts={this.props.loadFontLayouts}
 							loadFontLayoutSizeOptions={this.props.loadFontLayoutSizeOptions}
 							onSelectFontLayout={this.applyFontLayout}
@@ -1569,6 +1890,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 							onSelect={onSelect}
 							onZoom={onZoom}
 							onExportError={this.canvasHandlers.onExportError}
+							onExportWarning={this.canvasHandlers.onExportWarning}
 							onTooltip={onTooltip}
 							onContext={onContext}
 							onTransaction={onTransaction}
@@ -1583,10 +1905,10 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 								textColor: canvasTheme.rulerTextColor,
 							}}
 						/>
-						{fontLayoutFontsLoading ? (
+						{fontLayoutLayersLoading || fontLayoutFontsLoading ? (
 							<div className="rde-font-loading-overlay" role="status" aria-live="polite">
 								<Spin size="large" />
-								<span>正在加载字体...</span>
+								<span>{fontLayoutLayersLoading ? '正在加载图层...' : '正在加载字体...'}</span>
 							</div>
 						) : null}
 					</div>
@@ -1635,11 +1957,16 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				<aside className="rde-editor-inspector">
 					<ImageMapConfigurations
 						canvasRef={this.canvasRef}
+						objectMeasurementRevision={objectMeasurementRevision}
 						fontOptions={fontOptions}
 						fontFamiliesError={fontFamiliesError}
 						fontFamiliesLoading={fontFamiliesLoading}
+						onCenterHorizontally={() => this.canvasRef?.handler.alignmentHandler.centerHorizontallyInRegion()}
+						onCenterVertically={() => this.canvasRef?.handler.alignmentHandler.centerVerticallyInRegion()}
 						onFontSearch={this.onTextFontSearch}
 						onFontSelect={this.onTextFontSelect}
+						textGenerationRules={textGenerationRules}
+						textGenerationRulesLoading={textGenerationRulesLoading}
 						onChange={onChange}
 						selectedItem={selectedItem}
 						onChangeAnimations={onChangeAnimations}

@@ -55,9 +55,16 @@ export type Shop = {
   id: number;
   shop: string;
   shopName: string;
+  wecomRobotWebhookUrl?: string;
   products: string[];
   productCount: number;
   orderCount: number;
+  newOrderCount: number;
+  confirmationCount: number;
+  pendingProductionCount: number;
+  inProductionCount: number;
+  pendingShipmentCount: number;
+  completedOrderCount: number;
   sizeTemplateCount: number;
   fontTemplateCount: number;
   createdAt: string;
@@ -67,6 +74,7 @@ export type Shop = {
 export type ShopPayload = {
   shop: string;
   shopName: string;
+  wecomRobotWebhookUrl?: string;
   products: string[];
 };
 
@@ -102,6 +110,9 @@ export type ProductCategory = {
   specifications: string[];
   specificationField: string;
   commonSpecValues: ProductCommonSpecValue[];
+  backCoverSafeDistance: SafeDistance;
+  coverSafeDistance: SafeDistance;
+  spineSafeDistance: SafeDistance;
   shopIds: number[];
   shops: ProductShop[];
   sizeTemplateIds: number[];
@@ -114,6 +125,9 @@ export type ProductCategoryPayload = {
   specifications: string[];
   specificationField: string;
   commonSpecValues?: ProductCommonSpecValue[];
+  backCoverSafeDistance: SafeDistance;
+  coverSafeDistance: SafeDistance;
+  spineSafeDistance: SafeDistance;
   shopIds: number[];
   enabled?: boolean;
 };
@@ -257,6 +271,37 @@ export type CatalogSizeOption = {
   id: string;
   label: string;
   fields: CatalogSizeOptionFields;
+  layers?: FontLayoutLayerData;
+};
+
+export type InnerPageSizeOption = {
+  id: string;
+  label: string;
+  sizeUnit: SizeTemplateUnit;
+  layers: FontLayoutLayerData;
+};
+
+export type InnerPageSizeOptionUpdatePayload = Partial<Pick<InnerPageSizeOption, 'label' | 'sizeUnit' | 'layers'>>;
+
+export type InnerPageTemplate = {
+  id: number;
+  shopId: number;
+  productId: number;
+  name: string;
+  description: string;
+  previewImagePath: string;
+  sizeOptions: InnerPageSizeOption[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type InnerPageTemplatePayload = {
+  shopId?: number;
+  productId: number;
+  name?: string;
+  description?: string;
+  previewImagePath?: string;
+  sizeOptions?: InnerPageSizeOption[];
 };
 
 export type SafeDistance = {
@@ -302,7 +347,9 @@ export type CatalogSizeTemplate = {
   maxSpineWidth: number;
   paperThicknessMm: number;
   spineWidthBasis: 0 | 1;
+  backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
+  spineSafeDistance: SafeDistance;
   selectedSizeOptionId: string;
   displayUnit: SizeTemplateUnit;
   pageCount: number;
@@ -325,7 +372,9 @@ export type CatalogSizeTemplatePayload = {
   maxSpineWidth: number;
   paperThicknessMm: number;
   spineWidthBasis: 0 | 1;
+  backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
+  spineSafeDistance: SafeDistance;
   selectedSizeOptionId: string | null;
   displayUnit: SizeTemplateUnit;
   pageCount: number;
@@ -345,7 +394,7 @@ export type FontLayoutLibraryTemplate = {
   previewImage: string;
   layers: FontLayoutLayerData;
   isCurrentSizeTemplateLayout?: boolean;
-  layersSource?: 'size_variant' | 'base';
+  layersSource?: 'size_template_option' | 'size_variant' | 'base';
   usingBaseLayers?: boolean;
   message?: string;
   createdAt: string;
@@ -371,7 +420,7 @@ export type FontLayoutSizeOptionStatus = {
   sizeOptionId: string;
   label?: string;
   hasSizeVariant?: boolean;
-  layersSource?: 'size_variant' | 'base';
+  layersSource?: 'size_template_option' | 'size_variant' | 'base';
   usingBaseLayers?: boolean;
   message?: string;
 };
@@ -452,6 +501,28 @@ export type TemplateRule = {
   baseTemplateId: string;
   priority: number;
   enabled: boolean;
+};
+
+export type TextGenerationRule = {
+  id: number;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TemplateRuleDescription = TextGenerationRule;
+
+export type TextGenerationRulePayload = {
+  name: string;
+  description: string;
+};
+
+export type TextGenerationRuleListResult = {
+  items: TextGenerationRule[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type TemplateBinding = {

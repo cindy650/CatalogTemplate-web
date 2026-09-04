@@ -1,16 +1,13 @@
 import type { ReactNode } from 'react';
 import type {
-  AlbumTemplateDocument,
   ExportHistoryEntry,
   LocalUserProfile,
   Order,
   OrderListFilters,
   OrderStatusDefinition,
   Shop,
-  TemplateSummary
 } from '@shared/domain';
 import AccountPage from './account';
-import EditorPage from './editor';
 import ImageMapEditorTestPage from './imageMapEditorTest/ImageMapEditorTestPage';
 import ExportsPage from './exports';
 import OrdersPage from './orders';
@@ -20,13 +17,13 @@ import SizeTemplatesPage from './sizeTemplates';
 import FontsPage from './fonts/FontsPage';
 import TemplateLibraryPage from './templates/TemplateLibraryPage';
 import InnerPagesPage from './innerPages/InnerPagesPage';
+import TextGenerationRulesPage from './textGenerationRules/TextGenerationRulesPage';
 import type { ModuleId } from './types';
 import type { TemplateLibraryShopSelection } from './moduleRegistry';
 import type { CatalogSizeTemplate, ProductCategory } from '@shared/domain';
 
 type ModuleRenderContext = {
   account?: LocalUserProfile;
-  currentDocument?: AlbumTemplateDocument;
   exports: ExportHistoryEntry[];
   loadError: string;
   loading: boolean;
@@ -34,21 +31,19 @@ type ModuleRenderContext = {
   orderTemplateEditorOrder?: Order;
   saveOrderTemplate(order: Order, templateJson: Record<string, unknown>): Promise<void>;
   closeOrderTemplateEditor(): void;
-  openTemplate(templateId: string): Promise<void>;
   orders: Order[];
   orderTotal: number;
   orderLimit: number;
   orderPage: number;
   orderStatuses: OrderStatusDefinition[];
   orderFilters: OrderListFilters;
-  openShopOrders(shop: Shop): void;
+  openShopOrders(shop: Shop, status?: number): void;
   openShopSizeTemplates(shop: Shop): void;
   reloadOrders(filters?: OrderListFilters): Promise<void>;
   reloadShops(): Promise<void>;
   selectedOrder?: Order;
   selectedOrderId: string;
   setAccount(account: LocalUserProfile): void;
-  setCurrentDocument(document: AlbumTemplateDocument | undefined): void;
   setSelectedOrderId(orderId: string): void;
   setStatus(message: string): void;
   shops: Shop[];
@@ -66,6 +61,7 @@ type ModuleRenderContext = {
   editProduct(product: ProductCategory): void;
   deleteProduct(product: ProductCategory): void;
   setTemplateLibraryEditorMode(editing: boolean): void;
+  setInnerPagesEditorMode(editing: boolean): void;
 };
 
 export function renderActiveModule(activeModule: ModuleId, context: ModuleRenderContext): ReactNode {
@@ -101,15 +97,7 @@ export function renderActiveModule(activeModule: ModuleId, context: ModuleRender
       );
     }
     return (
-      <EditorPage
-        orders={context.orders}
-        selectedOrderId={context.selectedOrderId}
-        selectedOrder={context.selectedOrder}
-        currentDocument={context.currentDocument}
-        setCurrentDocument={context.setCurrentDocument}
-        setSelectedOrderId={context.setSelectedOrderId}
-        setStatus={context.setStatus}
-      />
+      <div className="panel">请从订单列表打开订单模板编辑器。</div>
     );
   }
 
@@ -128,7 +116,7 @@ export function renderActiveModule(activeModule: ModuleId, context: ModuleRender
   }
 
   if (activeModule === 'image-map-test') {
-    return <ImageMapEditorTestPage shops={context.shops} />;
+    return <ImageMapEditorTestPage shops={context.shops} initialProductId={context.selectedTemplateLibraryProductId} />;
   }
 
   if (activeModule === 'fonts') {
@@ -155,7 +143,12 @@ export function renderActiveModule(activeModule: ModuleId, context: ModuleRender
       products={context.products}
       selectedShopId={context.selectedInnerPagesShopId}
       selectedProductId={context.selectedInnerPagesProductId}
+      onEditorModeChange={context.setInnerPagesEditorMode}
     />;
+  }
+
+  if (activeModule === 'text-generation-rules') {
+    return <TextGenerationRulesPage />;
   }
 
   if (activeModule === 'size-templates') {

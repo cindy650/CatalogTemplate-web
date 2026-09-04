@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { App, Breadcrumb, Button, Form, Input, InputNumber, Layout, Menu, Modal, Select, Tag, Typography } from 'antd';
+import { App, Breadcrumb, Button, Form, Input, InputNumber, Layout, Menu, Modal, Select, Spin, Tag, Typography } from 'antd';
 import { DeleteOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MinusOutlined, PlusOutlined } from '@ant-design/icons';
-import type { ProductCategory, ProductCategoryPayload, ProductCommonSpecValue, Shop } from '@shared/domain';
+import type { ProductCategory, ProductCategoryPayload, ProductCommonSpecValue, SafeDistance, Shop } from '@shared/domain';
 import type { ModuleId } from '../modules/types';
 import {
   getModuleDefinition,
@@ -22,6 +22,38 @@ import type { ProductMenuActions } from '../modules/moduleRegistry';
 import type { TemplateLibraryShopSelection } from '../modules/moduleRegistry';
 
 const { Header, Sider, Content } = Layout;
+
+const emptySafeDistance = (): SafeDistance => ({ top: 0, right: 0, bottom: 0, left: 0 });
+
+function normalizedSafeDistance(value?: Partial<SafeDistance>): SafeDistance {
+  return {
+    top: Number(value?.top) || 0,
+    right: Number(value?.right) || 0,
+    bottom: Number(value?.bottom) || 0,
+    left: Number(value?.left) || 0
+  };
+}
+
+function SafeDistanceFormFields({
+  label,
+  name
+}: {
+  label: string;
+  name: 'backCoverSafeDistance' | 'coverSafeDistance' | 'spineSafeDistance';
+}) {
+  return (
+    <div className="product-safe-distance-group">
+      <Typography.Text strong>{label}</Typography.Text>
+      <div className="product-safe-distance-grid">
+        {([['top', '上'], ['right', '右'], ['bottom', '下'], ['left', '左']] as const).map(([side, sideLabel]) => (
+          <Form.Item key={side} name={[name, side]} label={sideLabel}>
+            <InputNumber min={0} />
+          </Form.Item>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const defaultCommonSpecValue: ProductCommonSpecValue = {
   id: '',
@@ -137,6 +169,8 @@ export default function AppLayout({
   const [productNames, setProductNames] = useState<string[]>([]);
   const [productDraft, setProductDraft] = useState('');
   const [productInputVisible, setProductInputVisible] = useState(false);
+  const [productSubmitting, setProductSubmitting] = useState(false);
+  const productSubmittingRef = useRef(false);
   const commonSpecUnitsRef = useRef<Record<string, ProductCommonSpecValue['unit']>>({});
   const activeModuleDefinition = getModuleDefinition(activeModule);
   const productActions: ProductMenuActions = useMemo(() => ({ onAdd: () => onOpenProductEditor(null), onEdit: onOpenProductEditor, onDelete: (product) => { void onDeleteProduct(product); } }), [onDeleteProduct, onOpenProductEditor]);
@@ -187,6 +221,11 @@ export default function AppLayout({
     setProductNames(productEditor?.productNames ?? []);
     setProductDraft('');
     setProductInputVisible(false);
+    productForm.setFieldsValue({
+      backCoverSafeDistance: productEditor?.backCoverSafeDistance ?? emptySafeDistance(),
+      coverSafeDistance: productEditor?.coverSafeDistance ?? emptySafeDistance(),
+      spineSafeDistance: productEditor?.spineSafeDistance ?? emptySafeDistance()
+    });
     commonSpecUnitsRef.current = Object.fromEntries(
       (productEditor?.commonSpecValues ?? []).map((value, index) => [
         String(index),
@@ -302,16 +341,25 @@ export default function AppLayout({
         open={productEditor !== undefined}
         okText="保存"
         cancelText="取消"
-        onCancel={onCloseProductEditor}
-        onOk={() => { void productForm.submit(); }}
+        confirmLoading={productSubmitting}
+        okButtonProps={{ disabled: productSubmitting }}
+        cancelButtonProps={{ disabled: productSubmitting }}
+        closable={!productSubmitting}
+        maskClosable={!productSubmitting}
+        onCancel={() => { if (!productSubmittingRef.current) onCloseProductEditor(); }}
+        onOk={() => { if (!productSubmittingRef.current) void productForm.submit(); }}
         destroyOnClose
       >
+        <Spin spinning={productSubmitting} tip="正在保存...">
         <Form form={productForm} layout="vertical" onFinish={async (values) => {
+          if (productSubmittingRef.current) return;
+          if (productNames.length === 0) {
+            message.error('至少添加一个商品名称');
+            return;
+          }
+          productSubmittingRef.current = true;
+          setProductSubmitting(true);
           try {
-            if (productNames.length === 0) {
-              message.error('至少添加一个商品名称');
-              return;
-            }
             await onSaveProduct(productEditor?.id, {
               name: String(values.name ?? '').trim(),
               description: String(values.description ?? ''),
@@ -338,12 +386,18 @@ export default function AppLayout({
                   paperThickness: Number(value.paperThickness) || 0
                 })).filter((value) => value.id || value.label)
                 : [],
+              backCoverSafeDistance: normalizedSafeDistance(values.backCoverSafeDistance),
+              coverSafeDistance: normalizedSafeDistance(values.coverSafeDistance),
+              spineSafeDistance: normalizedSafeDistance(values.spineSafeDistance),
               shopIds: Array.isArray(values.shopIds) ? values.shopIds.map(Number).filter(Number.isInteger) : [],
               enabled: true
             });
             onCloseProductEditor();
           } catch (error) {
             message.error(error instanceof Error ? error.message : String(error));
+          } finally {
+            productSubmittingRef.current = false;
+            setProductSubmitting(false);
           }
         }}>
           <Form.Item name="name" label="产品分类名称" rules={[{ required: true, whitespace: true, message: '请输入产品分类名称' }]}><Input placeholder="例如：婚礼签到册" /></Form.Item>
@@ -425,8 +479,15 @@ export default function AppLayout({
           <Form.Item name="specificationField" label="规格匹配字段">
             <Input placeholder="商品规格字段" />
           </Form.Item>
+          <div className="product-safe-distance-editor">
+            <Typography.Title level={5}>安全距离（mm）</Typography.Title>
+            <SafeDistanceFormFields label="封底安全距离" name="backCoverSafeDistance" />
+            <SafeDistanceFormFields label="封面安全距离" name="coverSafeDistance" />
+            <SafeDistanceFormFields label="背脊安全距离" name="spineSafeDistance" />
+          </div>
           <Form.Item name="shopIds" label="关联店铺"><Select mode="multiple" options={shops.map((shop) => ({ value: shop.id, label: shop.shopName || shop.shop || '未命名店铺' }))} placeholder="选择关联店铺" /></Form.Item>
         </Form>
+        </Spin>
       </Modal>
     </Layout>
   );
