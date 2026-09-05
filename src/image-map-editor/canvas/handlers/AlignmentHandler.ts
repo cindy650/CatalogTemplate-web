@@ -146,7 +146,9 @@ class AlignmentHandler {
 		const sideWidth = Math.max(0, Number(workarea.sideWidth || 0)) * factor;
 		const spineBleed = Math.max(0, Number(workarea.spineBleed || 0)) * factor;
 		const spineWidth = Math.max(0, Number(workarea.spineWidth || 0)) * factor;
-		const boundaries = isHorizontal
+		const boundaries = workarea.innerPage
+			? [0, size]
+			: isHorizontal
 			? (workarea.canvasRows === 2
 				? [
 					horizontalBleed * scaleX,

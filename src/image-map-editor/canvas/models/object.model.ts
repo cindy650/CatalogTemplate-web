@@ -306,7 +306,16 @@ export interface WorkareaOption {
 	verticalBleed?: number;
 	canvasRowGap?: number;
 	spineWidth?: number;
+	spineWidthMode?: 'fixed' | 'by_page_count';
 	spineBleed?: number;
+	spineWidthFormula?: {
+		unit: PrintUnit;
+		pageCountCoefficient: number;
+		pageCountThickness: number;
+		baseWidth: number;
+		additionalWidth: number;
+		spineBleed: number;
+	};
 	canvasRows?: CanvasRows;
 	backCoverSafeDistance?: WorkareaSafeDistance;
 	coverSafeDistance?: WorkareaSafeDistance;
@@ -344,7 +353,16 @@ export type WorkareaObject = FabricImage & {
 	verticalBleed?: number;
 	canvasRowGap?: number;
 	spineWidth?: number;
+	spineWidthMode?: 'fixed' | 'by_page_count';
 	spineBleed?: number;
+	spineWidthFormula?: {
+		unit: PrintUnit;
+		pageCountCoefficient: number;
+		pageCountThickness: number;
+		baseWidth: number;
+		additionalWidth: number;
+		spineBleed: number;
+	};
 	canvasRows?: CanvasRows;
 	backCoverSafeDistance?: WorkareaSafeDistance;
 	coverSafeDistance?: WorkareaSafeDistance;

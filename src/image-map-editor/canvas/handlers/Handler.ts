@@ -276,6 +276,8 @@ class Handler implements HandlerOptions {
 	public onLoad?: (handler: Handler, canvas?: fabric.Canvas) => void;
 	public onExportError?: (format: 'svg', error: Error) => void;
 	public onExportWarning?: (warnings: string[]) => void;
+	/** Skip text bounds correction and its editor-only safe-area overlay. */
+	public skipTextSafeAreaCheck = false;
 
 	public imageHandler: ImageHandler;
 	public chartHandler: ChartHandler;
@@ -314,6 +316,10 @@ class Handler implements HandlerOptions {
 	private batchRenderOnAddRemove = true;
 	private isRequsetAnimFrame = false;
 	private requestFrame: any;
+	private flashHighlights = new WeakMap<
+		FabricObject,
+		{ timer: ReturnType<typeof setTimeout>; rect: fabric.Rect }
+	>();
 	/**
 	 * Copied object
 	 *
@@ -494,8 +500,62 @@ class Handler implements HandlerOptions {
 	 * @param {*} value
 	 * @returns
 	 */
-	public set = (key: keyof FabricObject, value: any) => {
-		const activeObject = this.canvas.getActiveObject() as FabricObject;
+	private refreshParentGroup = (object?: FabricObject) => {
+		const group = (object as FabricObject & { group?: fabric.Group })?.group;
+		if (!group) return;
+		group.triggerLayout();
+		group.setCoords();
+	};
+
+	private ensureLinesHeight = (object?: FabricObject) => {
+		if (object?.type !== 'lines') return;
+		const getRequiredHeight = (object as FabricObject & { getRequiredHeight?: () => number }).getRequiredHeight;
+		const requiredHeight = getRequiredHeight?.call(object);
+		const scaleY = Number(object.scaleY || 1);
+		if (!requiredHeight || !scaleY || Number(object.height || 0) * scaleY >= requiredHeight) return;
+		object.set('height', requiredHeight / scaleY);
+		object.setCoords();
+	};
+
+	/** Briefly highlight an object with a temporary, slightly oversized backdrop. */
+	public flashObject = (object?: FabricObject) => {
+		if (!object) return;
+		const previousHighlight = this.flashHighlights.get(object);
+		if (previousHighlight) {
+			clearTimeout(previousHighlight.timer);
+			this.canvas.remove(previousHighlight.rect);
+		}
+		const group = (object as FabricObject & { group?: fabric.Group })?.group;
+		const bounds = object.getBoundingRect();
+		const padding = 8;
+		const highlight = new fabric.Rect({
+			left: bounds.left - padding,
+			top: bounds.top - padding,
+			width: bounds.width + padding * 2,
+			height: bounds.height + padding * 2,
+			originX: 'left',
+			originY: 'top',
+			fill: 'rgba(22, 119, 255, 0.32)',
+			selectable: false,
+			evented: false,
+			objectCaching: false,
+			excludeFromExport: true,
+		});
+		const parent = group || object;
+		const parentIndex = this.canvas.getObjects().indexOf(parent);
+		if (parentIndex >= 0) this.canvas.insertAt(parentIndex, highlight);
+		else this.canvas.add(highlight);
+		this.canvas.requestRenderAll();
+		const timer = setTimeout(() => {
+			this.canvas.remove(highlight);
+			this.canvas.requestRenderAll();
+			this.flashHighlights.delete(object);
+		}, 420);
+		this.flashHighlights.set(object, { timer, rect: highlight });
+	};
+
+	public set = (key: keyof FabricObject, value: any, target?: FabricObject) => {
+		const activeObject = target ?? this.canvas.getActiveObject() as FabricObject;
 		if (!activeObject) {
 			return;
 		}
@@ -505,14 +565,27 @@ class Handler implements HandlerOptions {
 		activeObject.set(key as any, value);
 		if (
 			key === 'fontFamily'
+			|| key === 'fontSize'
+			|| key === 'fontWeight'
+			|| key === 'fontStyle'
+			|| key === 'text'
 			|| key === 'lineHeight'
 			|| key === 'charSpacing'
 			|| key === 'wordSpacing'
+			|| key === 'lineThickness'
+			|| key === 'lineSpacing'
+			|| key === 'lineColor'
+			|| key === 'lineCount'
+			|| key === 'dashed'
+			|| key === 'cornerRadius'
+			|| key === 'dashDensity'
 		) {
 			(activeObject as FabricObject & { initDimensions?: () => void }).initDimensions?.();
 			activeObject.set('dirty', true);
+			this.ensureLinesHeight(activeObject);
 		}
 		activeObject.setCoords();
+		this.refreshParentGroup(activeObject);
 		this.canvas.requestRenderAll();
 		const { id, superType, type, player, width, height } = activeObject as any;
 		if (superType === 'element') {
@@ -543,8 +616,8 @@ class Handler implements HandlerOptions {
 	 * @param {Partial<FabricObject>} option
 	 * @returns
 	 */
-	public setObject = (option: Partial<FabricObject>) => {
-		const activeObject = this.canvas.getActiveObject() as any;
+	public setObject = (option: Partial<FabricObject>, target?: FabricObject) => {
+		const activeObject = target ?? this.canvas.getActiveObject() as any;
 		if (!activeObject) {
 			return;
 		}
@@ -554,6 +627,11 @@ class Handler implements HandlerOptions {
 				activeObject.setCoords();
 			}
 		});
+		if (Object.keys(option).some(key => ['lineThickness', 'lineSpacing', 'lineColor', 'lineCount', 'dashed', 'cornerRadius', 'dashDensity'].includes(key))) {
+			activeObject.set('dirty', true);
+			this.ensureLinesHeight(activeObject);
+		}
+		this.refreshParentGroup(activeObject);
 		this.canvas.requestRenderAll();
 		const { id, superType, type, player, width, height } = activeObject;
 		if (superType === 'element') {
@@ -598,11 +676,21 @@ class Handler implements HandlerOptions {
 			}
 		}
 		obj.set(key, value);
-		if (key === 'fontFamily' || key === 'lineHeight' || key === 'charSpacing' || key === 'wordSpacing') {
+		if (
+			key === 'fontFamily'
+			|| key === 'fontSize'
+			|| key === 'fontWeight'
+			|| key === 'fontStyle'
+			|| key === 'text'
+			|| key === 'lineHeight'
+			|| key === 'charSpacing'
+			|| key === 'wordSpacing'
+		) {
 			(obj as FabricObject & { initDimensions?: () => void }).initDimensions?.();
 			obj.set('dirty', true);
 		}
 		obj.setCoords();
+		this.refreshParentGroup(obj as FabricObject);
 		this.canvas.renderAll();
 		const { id, superType, type, player, width, height } = obj as any;
 		if (superType === 'element') {
@@ -658,6 +746,7 @@ class Handler implements HandlerOptions {
 		}
 		obj.set(option);
 		obj.setCoords();
+		this.refreshParentGroup(obj);
 		this.canvas.renderAll();
 		const { id, superType, type, player, width, height } = obj as any;
 		if (superType === 'element') {
@@ -684,12 +773,13 @@ class Handler implements HandlerOptions {
 	 * @param {fabric.Shadow} option
 	 * @returns
 	 */
-	public setShadow = (option: fabric.SerializedShadowOptions) => {
-		const activeObject = this.canvas.getActiveObject() as FabricObject;
+	public setShadow = (option: fabric.SerializedShadowOptions, target?: FabricObject) => {
+		const activeObject = target ?? this.canvas.getActiveObject() as FabricObject;
 		if (!activeObject) {
 			return;
 		}
 		activeObject.set('shadow', new fabric.Shadow(option));
+		this.refreshParentGroup(activeObject);
 		this.canvas.requestRenderAll();
 		this.onModified?.(activeObject);
 	};
@@ -715,6 +805,7 @@ class Handler implements HandlerOptions {
 				const scale = (height * scaleY) / imgObj.height;
 				imgObj.set({ scaleY: scale, scaleX: scale, src });
 			}
+			this.refreshParentGroup(imgObj);
 			this.canvas.requestRenderAll();
 		};
 		return new Promise(resolve => {
@@ -785,16 +876,25 @@ class Handler implements HandlerOptions {
 		xmlString?: boolean,
 	): Promise<SvgObject> => {
 		return new Promise(resolve => {
+			const finish = (promise: Promise<SvgObject>) => {
+				promise.then(result => {
+					this.refreshParentGroup(obj);
+					this.canvas.requestRenderAll();
+					this.onModified?.(obj);
+					resolve(result);
+				}).catch(() => resolve(obj));
+			};
 			if (!source) {
-				resolve(obj.loadSvg({ src: './images/sample/chiller.svg', loadType: 'file', keepSize }));
+				finish(obj.loadSvg({ src: './images/sample/chiller.svg', loadType: 'file', keepSize }));
+				return;
 			}
 			if (source instanceof File) {
 				const reader = new FileReader();
 				reader.readAsDataURL(source);
 				reader.onload = () =>
-					resolve(obj.loadSvg({ src: reader.result as string, loadType: 'file', keepSize }));
+					finish(obj.loadSvg({ src: reader.result as string, loadType: 'file', keepSize }));
 			} else {
-				resolve(obj.loadSvg({ src: source, loadType: xmlString ? 'svg' : 'file', keepSize }));
+				finish(obj.loadSvg({ src: source, loadType: xmlString ? 'svg' : 'file', keepSize }));
 			}
 		});
 	};
@@ -1451,15 +1551,16 @@ class Handler implements HandlerOptions {
 	 * @param {number} width
 	 * @param {number} height
 	 */
-	public scaleToResize = (width: number, height: number) => {
-		const activeObject = this.canvas.getActiveObject() as FabricObject;
+	public scaleToResize = (width: number, height: number, target?: FabricObject) => {
+		const activeObject = target ?? this.canvas.getActiveObject() as FabricObject;
+		if (!activeObject?.width || !activeObject?.height) return;
 		const { id } = activeObject;
 		const obj = {
 			id,
 			scaleX: width / activeObject.width,
 			scaleY: height / activeObject.height,
 		};
-		this.setObject(obj);
+		this.setObject(obj, activeObject);
 		activeObject.setCoords();
 		this.canvas.requestRenderAll();
 	};
@@ -1563,6 +1664,9 @@ class Handler implements HandlerOptions {
 	 * the check is performed against the current workarea transform.
 	 */
 	public prepareTextLayersForExport = (): { warnings: string[]; blocked: boolean; objects: FabricObject[] } => {
+		if (this.skipTextSafeAreaCheck) {
+			return { warnings: [], blocked: false, objects: this.exportJSON() };
+		}
 		const workarea = this.workarea;
 		if (!workarea) return { warnings: [], blocked: false, objects: this.exportJSON() };
 		const origin = workarea.getPointByOrigin('left', 'top');
@@ -1604,7 +1708,9 @@ class Handler implements HandlerOptions {
 		const coverSafeDistance = normalizeSafeDistance(workarea.coverSafeDistance);
 		const spineSafeDistance = normalizeSafeDistance(workarea.spineSafeDistance);
 		const backCoverSafeDistance = normalizeSafeDistance(workarea.backCoverSafeDistance);
-		const horizontalFaces = (workarea.canvasRows === 2
+		const horizontalFaces = (workarea.innerPage
+			? [{ name: '内页', start: 0, end: logicalWidth, safe: { top: 0, right: 0, bottom: 0, left: 0 } }]
+			: workarea.canvasRows === 2
 			? [
 				{ name: '封面', start: horizontalBleed * factor, end: (horizontalBleed + sideWidth) * factor, safe: coverSafeDistance },
 				{ name: '封底', start: (logicalWidth / factor - horizontalBleed - sideWidth) * factor, end: (logicalWidth / factor - horizontalBleed) * factor, safe: backCoverSafeDistance },
@@ -2162,11 +2268,12 @@ class Handler implements HandlerOptions {
 	 *
 	 * @param {number} angle
 	 */
-	public rotate = (angle: number) => {
-		const activeObject = this.canvas.getActiveObject();
+	public rotate = (angle: number, target?: FabricObject) => {
+		const activeObject = target ?? this.canvas.getActiveObject();
 		if (activeObject) {
-			this.set('rotation', angle);
+			this.set('rotation', angle, activeObject);
 			activeObject.rotate(angle);
+			this.refreshParentGroup(activeObject);
 			this.canvas.requestRenderAll();
 		}
 	};

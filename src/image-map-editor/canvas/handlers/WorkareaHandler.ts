@@ -74,6 +74,10 @@ class WorkareaHandler {
 			values.verticalBleed ?? this.handler.workarea?.verticalBleed ?? values.bleed ?? this.handler.workarea?.bleed,
 			0.79,
 		),
+		spineWidthMode: (values.spineWidthMode ?? this.handler.workarea?.spineWidthMode) === 'by_page_count'
+			? 'by_page_count'
+			: 'fixed',
+		spineWidthFormula: values.spineWidthFormula ?? this.handler.workarea?.spineWidthFormula,
 		canvasRowGap: this.toPositiveNumber(
 			values.canvasRowGap ?? this.handler.workarea?.canvasRowGap,
 			WorkareaHandler.canvasRowGap,
@@ -85,6 +89,7 @@ class WorkareaHandler {
 			? 0
 			: this.toPositiveNumber(values.spineWidth ?? this.handler.workarea?.spineWidth, 0.55),
 		spineBleed: (values.canvasRows ?? this.handler.workarea?.canvasRows) === 2
+			|| (values.spineWidthMode ?? this.handler.workarea?.spineWidthMode) === 'by_page_count'
 			? 0
 			: this.toPositiveNumber(values.spineBleed ?? this.handler.workarea?.spineBleed, 0.55),
 		canvasRows: (values.canvasRows ?? this.handler.workarea?.canvasRows) === 2 ? 2 : 1,
@@ -258,7 +263,11 @@ class WorkareaHandler {
 		});
 		ctx.setLineDash([]);
 		if (workarea.printGuides?.length) this.drawPrintDimensionLabels(ctx, origin, height, workarea, zoom);
-		this.drawSafeDistanceGuides(ctx, origin, width, height, workarea, zoom);
+		// Inner-page canvases use the full canvas as their safe area. Keep that
+		// rule implicit and avoid drawing the template-library safe-area overlay.
+		if (!workarea.innerPage && !this.handler.skipTextSafeAreaCheck) {
+			this.drawSafeDistanceGuides(ctx, origin, width, height, workarea, zoom);
+		}
 		ctx.restore();
 	};
 
@@ -475,6 +484,15 @@ class WorkareaHandler {
 			unit,
 			sideWidth,
 			sideHeight,
+			bleed: 0,
+			separateBleed: false,
+			horizontalBleed: 0,
+			verticalBleed: 0,
+			backCoverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+			coverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+			spineSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+			spineWidth: 0,
+			spineBleed: 0,
 			canvasRows: 1,
 			printGuides: [],
 			innerPage: true,

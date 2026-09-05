@@ -1,7 +1,7 @@
 import { Button, Card, Descriptions, Empty, Result, Tooltip } from 'antd';
 import { DownOutlined, DragOutlined, UpOutlined } from '@ant-design/icons';
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import type { Order, Shop } from '@shared/domain';
+import type { Order, ProductCategory, Shop } from '@shared/domain';
 import { ImageMapEditor } from '../../image-map-editor/editor-entry';
 import type {
   ImageMapEditorDocumentValue,
@@ -20,10 +20,12 @@ import {
   saveFontLayout,
   updateFontLayout
 } from '../imageMapEditorTest/imageMapEditorHost';
+import { isOathBookProduct } from '../productRules';
 
 interface OrderTemplateEditorPageProps {
   order: Order;
   shops: Shop[];
+  products: ProductCategory[];
   saveTemplate?(order: Order, templateJson: Record<string, unknown>): void | Promise<void>;
   onExit(): void;
 }
@@ -33,7 +35,7 @@ function finiteNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function orderSizeScheme(order: Order): ImageMapSizeSchemeValue {
+function orderSizeScheme(order: Order, product?: ProductCategory): ImageMapSizeSchemeValue {
   const snapshot = order.matchedTemplate;
   const selectedSize = String(snapshot.selected_size ?? snapshot.selectedSize ?? 'order-size');
   const unitValue = String(snapshot.size_unit ?? snapshot.sizeUnit ?? 'in');
@@ -54,9 +56,9 @@ function orderSizeScheme(order: Order): ImageMapSizeSchemeValue {
     minSpineWidth: finiteNumber(snapshot.spine_width ?? snapshot.spineWidth),
     maxSpineWidth: finiteNumber(snapshot.spine_width ?? snapshot.spineWidth),
     spineBleed: finiteNumber(snapshot.spine_bleed ?? snapshot.spineBleed),
-    backCoverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
-    coverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
-    spineSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
+    backCoverSafeDistance: product?.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+    coverSafeDistance: product?.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+    spineSafeDistance: product?.spineSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
     paperThickness: 0
   };
 }
@@ -113,7 +115,19 @@ function savedOrderTemplateJson(
   };
 }
 
-export default function OrderTemplateEditorPage({ order, shops, saveTemplate, onExit }: OrderTemplateEditorPageProps) {
+function resolveOrderProduct(order: Order, products: ProductCategory[]): ProductCategory | undefined {
+  if (order.productId !== undefined) {
+    const productById = products.find((item) => item.id === order.productId);
+    if (productById) return productById;
+  }
+
+  const orderProductName = (order.raw.product || order.items[0]?.productName || '').trim().toLocaleLowerCase();
+  if (!orderProductName) return undefined;
+  return products.find((product) => [product.name, ...product.productNames]
+    .some((name) => name.trim().toLocaleLowerCase() === orderProductName));
+}
+
+export default function OrderTemplateEditorPage({ order, shops, products, saveTemplate, onExit }: OrderTemplateEditorPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ offsetX: number; offsetY: number }>();
@@ -173,11 +187,13 @@ export default function OrderTemplateEditorPage({ order, shops, saveTemplate, on
     );
   }
 
-  const sizeScheme = orderSizeScheme(order);
   const snapshotShopId = finiteNumber(order.matchedTemplate.shop_id ?? order.matchedTemplate.shopId);
   const shopId = order.shopId ?? (snapshotShopId > 0 ? snapshotShopId : undefined);
   const snapshotProductId = finiteNumber(order.matchedTemplate.product_id ?? order.matchedTemplate.productId);
   const productId = order.productId ?? (snapshotProductId > 0 ? snapshotProductId : undefined);
+  const product = resolveOrderProduct(order, products)
+    ?? (productId !== undefined ? products.find((item) => item.id === productId) : undefined);
+  const sizeScheme = orderSizeScheme(order, product);
   const layoutId = finiteNumber(order.resolvedLayers.id);
   const productInformation = Object.entries(order.productInformation)
     .filter(([, value]) => value.trim())
@@ -212,6 +228,7 @@ export default function OrderTemplateEditorPage({ order, shops, saveTemplate, on
         initialLayers={initialLayers}
         initialSizeSchemes={[sizeScheme]}
         initialActiveSizeSchemeId={sizeScheme.id}
+        skipTextSafeAreaCheck={product ? isOathBookProduct(product) : false}
         selectedFontLayoutId={layoutId > 0 ? layoutId : undefined}
         hiddenActivities={['basicInfo', 'canvas', 'fontLayouts']}
         saveConfirmTitle="确认修改订单"

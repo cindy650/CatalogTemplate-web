@@ -38,7 +38,7 @@ type GeneralPropertyContext = {
 
 export default {
 	render(canvasRef: CanvasInstance | undefined, _form: unknown, data: GeneralPropertyData, context: GeneralPropertyContext = {}) {
-		const isPhysicalShape = ['rect', 'triangle', 'circle'].includes(String(data.type || '').toLowerCase());
+		const isPhysicalShape = ['rect', 'triangle', 'circle', 'lines', 'dashedrect'].includes(String(data.type || '').toLowerCase());
 		const workareaUnit = canvasRef?.handler?.workarea?.unit;
 		const unit = workareaUnit === 'cm' || workareaUnit === 'mm' ? workareaUnit : 'in';
 		const factor = imageMapPixelsPerUnit[unit];

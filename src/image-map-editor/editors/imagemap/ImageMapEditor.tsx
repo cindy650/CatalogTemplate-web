@@ -72,6 +72,7 @@ const propertiesToInclude = [
 	'verticalBleed',
 	'spineWidth',
 	'spineBleed',
+	'spineWidthMode',
 	'canvasRows',
 	'canvasRowGap',
 	'printGuides',
@@ -130,7 +131,7 @@ type ImageMapEditorActivity = 'basicInfo' | 'canvas' | 'fontLayouts' | 'assets';
 const assetDescriptorTypes: Record<string, ReadonlySet<string>> = {
 	TEXT: new Set(['textbox']),
 	IMAGE: new Set(['image']),
-	SHAPE: new Set(['triangle', 'rect', 'circle']),
+	SHAPE: new Set(['triangle', 'rect', 'circle', 'lines', 'dashedRect']),
 	DRAWING: new Set(['polygon']),
 	SVG: new Set(['svg']),
 };
@@ -229,6 +230,8 @@ export interface ImageMapEditorProps {
 	hiddenActivities?: ImageMapEditorActivity[];
 	/** Use a plain single-page workarea instead of cover/spine geometry. */
 	innerPageMode?: boolean;
+	/** Skip automatic text safe-area correction for explicitly exempt products. */
+	skipTextSafeAreaCheck?: boolean;
 	onExit?: () => void;
 	exitLabel?: string;
 }
@@ -318,6 +321,8 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 	};
 
 			handleCanvasLoad = (handler: CanvasInstance['handler']) => {
+		handler.skipTextSafeAreaCheck = this.props.skipTextSafeAreaCheck === true;
+		handler.canvas.requestRenderAll();
 		if (this.initialSizeSchemeApplied) return;
 		this.initialSizeSchemeApplied = true;
 		const activeSizeScheme = this.state.sizeSchemes.find(
@@ -572,7 +577,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 	onTextFontSelect = async (font: { family: string; filePath: string; aliases?: string[] }) => {
 		const family = font.family.trim();
 		const filePath = font.filePath.trim();
-		const target = this.canvasRef?.canvas.getActiveObject() as any;
+		const target = this.state.selectedItem || this.canvasRef?.canvas.getActiveObject() as any;
 		const targetId = target?.id ? String(target.id) : '';
 		if (!family || !filePath || !target || !targetId || targetId === 'workarea') return false;
 		const requestId = (this.textFontSelectionRequestIds.get(targetId) ?? 0) + 1;
@@ -584,7 +589,17 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			return false;
 		}
 		if (this.textFontSelectionRequestIds.get(targetId) !== requestId) return false;
-		const currentTarget = this.canvasRef?.handler.getObjects().find(object => String(object.id) === targetId);
+		const findTarget = (objects: any[]): any => {
+			for (const object of objects) {
+				if (String(object?.id) === targetId) return object;
+				if (typeof object?.getObjects === 'function') {
+					const nested = findTarget(object.getObjects());
+					if (nested) return nested;
+				}
+			}
+			return undefined;
+		};
+		const currentTarget = findTarget(this.canvasRef?.handler.getObjects() || []);
 		if (!currentTarget) return false;
 		this.cacheFontAsset(font);
 		this.canvasRef?.handler.setByObject(currentTarget, 'fontUrl', filePath);
@@ -660,22 +675,26 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			}
 			const changedKey = Object.keys(changedValues)[0];
 			const changedValue = changedValues[changedKey];
+			// A child shown in the group tree is not the Fabric active object; keep
+			// the group active while directing property updates to that child.
+			const target = selectedItem?.group ? selectedItem : undefined;
 			if (allValues.workarea) {
 				this.canvasHandlers.onChangeWokarea(changedKey, changedValue, allValues.workarea);
 				return;
 			}
 			if (changedKey === 'width' || changedKey === 'height') {
-				const isShape = ['rect', 'triangle', 'circle'].includes(String(selectedItem?.type || '').toLowerCase());
+				const isShape = ['rect', 'triangle', 'circle', 'lines', 'dashedrect'].includes(String(selectedItem?.type || '').toLowerCase());
 				const unit = this.canvasRef?.handler.workarea?.unit;
 				const factor = unit === 'cm' ? 96 / 2.54 : unit === 'mm' ? 96 / 25.4 : 96;
 				this.canvasRef?.handler.scaleToResize(
 					isShape ? Number(allValues.width) * factor : allValues.width,
 					isShape ? Number(allValues.height) * factor : allValues.height,
+					target,
 				);
 				return;
 			}
 			if (changedKey === 'angle') {
-				this.canvasRef?.handler.rotate(allValues.angle);
+				this.canvasRef?.handler.rotate(allValues.angle, target);
 				return;
 			}
 			if (changedKey === 'left') {
@@ -695,12 +714,16 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 					hoverCursor: changedValue ? 'pointer' : 'move',
 					editable: !changedValue,
 					locked: changedValue,
-				});
+				}, target);
 				return;
 			}
 			if (changedKey === 'file' || changedKey === 'src' || changedKey === 'code' || changedKey === 'svg') {
 				if (selectedItem.type === 'image') {
-					this.canvasRef?.handler.setImageById(selectedItem.id, changedValue, true);
+					if (target) {
+						void this.canvasRef.handler.setImage(selectedItem, changedValue, true);
+					} else {
+						void this.canvasRef?.handler.setImageById(selectedItem.id, changedValue, true);
+					}
 				} else if (selectedItem.superType === 'element') {
 					this.canvasRef?.handler.elementHandler.setById(selectedItem.id, changedValue);
 				} else if (selectedItem.superType === 'svg') {
@@ -710,37 +733,37 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			}
 			if (changedKey === 'link') {
 				const link = Object.assign({}, defaultOption.link, allValues.link);
-				this.canvasRef?.handler.set(changedKey, link);
+				this.canvasRef?.handler.set(changedKey, link, target);
 				return;
 			}
 			if (changedKey === 'tooltip') {
 				const tooltip = Object.assign({}, defaultOption.tooltip, allValues.tooltip);
-				this.canvasRef?.handler.set(changedKey, tooltip);
+				this.canvasRef?.handler.set(changedKey, tooltip, target);
 				return;
 			}
 			if (changedKey === 'animation') {
 				const animation = Object.assign({}, defaultOption.animation, allValues.animation);
-				this.canvasRef?.handler.set(changedKey, animation);
+				this.canvasRef?.handler.set(changedKey, animation, target);
 				return;
 			}
 			if (changedKey === 'icon') {
 				const { unicode, styles } = changedValue[Object.keys(changedValue)[0]];
 				const uni = parseInt(unicode, 16);
 				if (styles[0] === 'brands') {
-					this.canvasRef?.handler.set('fontFamily', 'Font Awesome 5 Brands');
+					this.canvasRef?.handler.set('fontFamily', 'Font Awesome 5 Brands', target);
 				} else if (styles[0] === 'regular') {
-					this.canvasRef?.handler.set('fontFamily', 'Font Awesome 5 Regular');
+					this.canvasRef?.handler.set('fontFamily', 'Font Awesome 5 Regular', target);
 				} else {
-					this.canvasRef?.handler.set('fontFamily', 'Font Awesome 5 Free');
+					this.canvasRef?.handler.set('fontFamily', 'Font Awesome 5 Free', target);
 				}
-				this.canvasRef?.handler.set('text', String.fromCodePoint(uni));
-				this.canvasRef?.handler.set('icon', changedValue);
+				this.canvasRef?.handler.set('text', String.fromCodePoint(uni), target);
+				this.canvasRef?.handler.set('icon', changedValue, target);
 				return;
 			}
 			if (changedKey === 'shadow') {
 				if (allValues.shadow.enabled) {
 					if ('blur' in allValues.shadow) {
-						this.canvasRef?.handler.setShadow(allValues.shadow as any);
+						this.canvasRef?.handler.setShadow(allValues.shadow as any, target);
 					} else {
 						this.canvasRef?.handler.setShadow({
 							enabled: true,
@@ -751,34 +774,34 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 							blur: 15,
 							offsetX: 10,
 							offsetY: 10,
-						} as any);
+						} as any, target);
 					}
 				} else {
-					this.canvasRef?.handler.setShadow(null);
+					this.canvasRef?.handler.setShadow(null, target);
 				}
 				return;
 			}
 			if (changedKey === 'fontWeight') {
-				this.canvasRef?.handler.set(changedKey, changedValue ? 'bold' : 'normal');
+				this.canvasRef?.handler.set(changedKey, changedValue ? 'bold' : 'normal', target);
 				return;
 			}
 			if (changedKey === 'fontFamily') {
 				const fontUrl = this.fontAssets.get(String(changedValue).trim().toLocaleLowerCase());
-				this.canvasRef?.handler.set('fontUrl' as any, fontUrl || '');
-				this.canvasRef?.handler.set(changedKey, changedValue);
+				this.canvasRef?.handler.set('fontUrl' as any, fontUrl || '', target);
+				this.canvasRef?.handler.set(changedKey, changedValue, target);
 				return;
 			}
 			if (changedKey === 'fontStyle') {
-				this.canvasRef?.handler.set(changedKey, changedValue ? 'italic' : 'normal');
+				this.canvasRef?.handler.set(changedKey, changedValue ? 'italic' : 'normal', target);
 				return;
 			}
 			if (changedKey === 'textAlign') {
-				this.canvasRef?.handler.set(changedKey, Object.keys(changedValue)[0]);
+				this.canvasRef?.handler.set(changedKey, Object.keys(changedValue)[0], target);
 				return;
 			}
 			if (changedKey === 'trigger') {
 				const trigger = Object.assign({}, defaultOption.trigger, allValues.trigger);
-				this.canvasRef?.handler.set(changedKey, trigger);
+				this.canvasRef?.handler.set(changedKey, trigger, target);
 				return;
 			}
 			if (changedKey === 'filters') {
@@ -787,52 +810,52 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				const enabled = typeof filterValue === 'object' ? filterValue.enabled : filterValue;
 				if (filterKey === 'gamma') {
 					const rgb = [filterValue.r, filterValue.g, filterValue.b];
-					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, { gamma: rgb });
+					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, { gamma: rgb }, target as any);
 					return;
 				}
 				if (filterKey === 'brightness') {
 					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, {
 						brightness: filterValue.brightness,
-					});
+					}, target as any);
 					return;
 				}
 				if (filterKey === 'contrast') {
 					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, {
 						contrast: filterValue.contrast,
-					});
+					}, target as any);
 					return;
 				}
 				if (filterKey === 'saturation') {
 					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, {
 						saturation: filterValue.saturation,
-					});
+					}, target as any);
 					return;
 				}
 				if (filterKey === 'hue') {
 					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, {
 						rotation: filterValue.rotation,
-					});
+					}, target as any);
 					return;
 				}
 				if (filterKey === 'noise') {
 					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, {
 						noise: filterValue.noise,
-					});
+					}, target as any);
 					return;
 				}
 				if (filterKey === 'pixelate') {
 					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, {
 						blocksize: filterValue.blocksize,
-					});
+					}, target as any);
 					return;
 				}
 				if (filterKey === 'blur') {
 					this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, {
 						value: filterValue.value,
-					});
+					}, target as any);
 					return;
 				}
-				this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled);
+				this.canvasRef?.handler.imageHandler.applyFilterByType(filterKey, enabled, undefined, target as any);
 				return;
 			}
 			if (changedKey === 'chartOption') {
@@ -849,9 +872,9 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				return;
 			}
 			if (selectedItem.type === 'svg' && changedKey === 'fill') {
-				selectedItem.setFill(changedValue);
+				this.canvasRef?.handler.setByObject(selectedItem, changedKey, changedValue);
 			} else {
-				this.canvasRef?.handler.set(changedKey, changedValue);
+				this.canvasRef?.handler.set(changedKey, changedValue, target);
 			}
 		},
 		onChangeWokarea: (changedKey: string, changedValue: any, allValues: Record<string, any>) => {
@@ -1058,10 +1081,10 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			inputEl.hidden = true;
 			inputEl.onchange = event => {
 				this.handlers.onImport((event.target as HTMLInputElement | null)?.files);
+				inputEl.remove();
 			};
 			document.body.appendChild(inputEl);
 			inputEl.click();
-			inputEl.remove();
 		},
 		onDownload: () => {
 			this.showLoading(true);

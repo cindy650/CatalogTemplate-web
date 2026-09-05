@@ -16,7 +16,7 @@ import { renderActiveModule } from './modules/moduleRenderer';
 import { useAppRoute } from './router/useAppRoute';
 import { connectOrderEventStream } from './services/orderEventStream';
 import { notifyByVisibility, requestSystemNotificationPermission } from './services/notificationRouter';
-import { speakOrderMessage, unlockOrderSpeechOnFirstUserActivation } from './services/orderSpeech';
+import { playOrderNotificationSound } from './services/orderNotificationAudio';
 import type { SseNotificationEvent } from '@shared/events';
 import { browserAlbumApi } from './api';
 import type { TemplateLibraryShopSelection } from './modules/moduleRegistry';
@@ -56,7 +56,6 @@ function App() {
 
   useEffect(() => {
     void requestSystemNotificationPermission();
-    return unlockOrderSpeechOnFirstUserActivation();
   }, []);
 
   const refreshOrders = useCallback(async (filters?: OrderListFilters) => {
@@ -215,7 +214,7 @@ function App() {
           orderNumber ? `订单号：${orderNumber}` : ''
         ].filter(Boolean).join('；');
 
-        speakOrderMessage([event.msg || '新订单已入库', description].filter(Boolean).join('；'));
+        playOrderNotificationSound();
 
         void notifyByVisibility({
           title: event.msg || '新订单已入库',
@@ -235,7 +234,7 @@ function App() {
       onNotification: (event: SseNotificationEvent) => {
         const messageText = event.msg.trim();
         if (!messageText) return;
-        if (event.type.startsWith('order.')) speakOrderMessage(messageText);
+        if (event.type.startsWith('order.')) playOrderNotificationSound();
         void notifyByVisibility({
           title: messageText,
           body: '',

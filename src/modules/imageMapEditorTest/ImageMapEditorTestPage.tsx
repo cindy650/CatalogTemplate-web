@@ -30,7 +30,8 @@ interface ImageMapEditorTestPageProps {
   initialShopId?: number;
   initialProductId?: number;
   initialSizeSchemes?: Partial<ImageMapSizeSchemeValue>[];
-  productSafeDistances?: Pick<CatalogSizeTemplate, 'backCoverSafeDistance' | 'coverSafeDistance' | 'spineSafeDistance'>;
+  productSafeDistances?: Pick<CatalogSizeTemplate, 'backCoverSafeDistance' | 'coverSafeDistance' | 'spineSafeDistance'> & { spineWidthFormula?: import('@shared/domain').SpineWidthFormula };
+  skipTextSafeAreaCheck?: boolean;
   onExit?(): void;
 }
 
@@ -63,6 +64,7 @@ function templateSizeSchemes(
     minSpineWidth: template.minSpineWidth,
     maxSpineWidth: template.maxSpineWidth,
     spineBleed: option.fields.spine_bleed,
+    spineWidthFormula: productSafeDistances?.spineWidthFormula,
     backCoverSafeDistance: productSafeDistances?.backCoverSafeDistance ?? template.backCoverSafeDistance,
     coverSafeDistance: productSafeDistances?.coverSafeDistance ?? template.coverSafeDistance,
     spineSafeDistance: productSafeDistances?.spineSafeDistance ?? template.spineSafeDistance,
@@ -142,7 +144,7 @@ function templateFieldsChanged(
   return JSON.stringify(comparable(next)) !== JSON.stringify(comparable(previous));
 }
 
-export default function ImageMapEditorTestPage({ shops, template, initialShopId, initialProductId, initialSizeSchemes, productSafeDistances, onExit }: ImageMapEditorTestPageProps) {
+export default function ImageMapEditorTestPage({ shops, template, initialShopId, initialProductId, initialSizeSchemes, productSafeDistances, skipTextSafeAreaCheck, onExit }: ImageMapEditorTestPageProps) {
   const { message } = AntdApp.useApp();
   const [detail, setDetail] = useState<CatalogSizeTemplate | undefined>(template);
   const [loading, setLoading] = useState(Boolean(template));
@@ -294,6 +296,7 @@ export default function ImageMapEditorTestPage({ shops, template, initialShopId,
         initialSizeSchemes={editorInitialSizeSchemes}
         initialActiveSizeSchemeId={detail?.selectedSizeOptionId}
         selectedFontLayoutId={detail?.selectedFontLayoutId}
+		skipTextSafeAreaCheck={skipTextSafeAreaCheck}
         onExit={onExit}
         shops={shops.map((shop) => ({
           value: shop.id,

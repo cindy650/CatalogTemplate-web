@@ -1,11 +1,13 @@
 import AnimationProperty from './AnimationProperty';
 import ChartProperty from './ChartProperty';
+import DashedRectProperty from './DashedRectProperty';
 import ElementProperty from './ElementProperty';
 import GeneralProperty from './GeneralProperty';
 import IframeProperty from './IframeProperty';
 import ImageFilterProperty from './ImageFilterProperty';
 import ImageProperty from './ImageProperty';
 import LinkProperty from './LinkProperty';
+import LinesProperty from './LinesProperty';
 import MapProperty from './MapProperty';
 import MarkerProperty from './MarkerProperty';
 import ShadowProperty from './ShadowProperty';
@@ -337,6 +339,34 @@ const PropertyDefinition: PropertyDefinitionMap = {
 			component: UserProperty,
 		},
 	},
+	lines: {
+		general: {
+			title: 'General',
+			component: GeneralProperty,
+		},
+		lines: {
+			title: 'Lines',
+			component: LinesProperty,
+		},
+		shadow: {
+			title: 'Shadow',
+			component: ShadowProperty,
+		},
+	},
+	dashedRect: {
+		general: {
+			title: 'General',
+			component: GeneralProperty,
+		},
+		dashedRect: {
+			title: 'Dashed Rect',
+			component: DashedRectProperty,
+		},
+		shadow: {
+			title: 'Shadow',
+			component: ShadowProperty,
+		},
+	},
 	arrow: {
 		general: {
 			title: 'General',
@@ -454,7 +484,7 @@ const PropertyDefinition: PropertyDefinitionMap = {
 const propertyTitleTranslations: Record<string, string> = {
 	Map: '画布', Image: '图片', General: '常规', Shadow: '阴影', Marker: '标记', Link: '链接', Tooltip: '提示',
 	Style: '样式', Animation: '动画', Trigger: '触发器', 'User Property': '自定义属性', Text: '文本', Filter: '滤镜',
-	Video: '视频', Element: '元素', Iframe: '内嵌页面', SVG: 'SVG', 'Chart Option': '图表配置',
+	Video: '视频', Element: '元素', Iframe: '内嵌页面', SVG: 'SVG', Lines: '线条', 'Dashed Rect': '虚线框', 'Chart Option': '图表配置',
 };
 
 Object.values(PropertyDefinition).forEach(sections => {

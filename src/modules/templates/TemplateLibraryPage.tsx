@@ -6,6 +6,7 @@ import { browserAlbumApi } from '../../api';
 import type { TemplateLibraryPageProps } from '../types';
 import type { TemplateLibraryShopSelection } from '../moduleRegistry';
 import ImageMapEditorTestPage from '../imageMapEditorTest/ImageMapEditorTestPage';
+import { isOathBookProduct } from '../productRules';
 
 const oathBookInitialSizeSchemes = [{
   id: '默认规格',
@@ -37,8 +38,9 @@ function productInitialSizeSchemes(product: ProductCategory) {
     backCoverSafeDistance: product.backCoverSafeDistance,
     coverSafeDistance: product.coverSafeDistance,
     spineSafeDistance: product.spineSafeDistance,
+    spineWidthFormula: product.spineWidthFormula,
   };
-  if (product.name.trim().includes('宣誓册')) {
+  if (isOathBookProduct(product)) {
     return oathBookInitialSizeSchemes.map((scheme) => ({ ...scheme, ...safeDistances }));
   }
   if (!product.commonSpecValues.length) return [safeDistances];
@@ -146,6 +148,7 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
           initialProductId={selectedProductId}
           initialSizeSchemes={productInitialSizeSchemes(product)}
           productSafeDistances={product}
+          skipTextSafeAreaCheck={isOathBookProduct(product)}
           onExit={() => setEditingTemplateId(undefined)}
         />
       );
@@ -156,6 +159,7 @@ export default function TemplateLibraryPage({ products, shops, selectedProductId
         shops={shops}
         template={template}
         productSafeDistances={product}
+        skipTextSafeAreaCheck={isOathBookProduct(product)}
         onExit={() => setEditingTemplateId(undefined)}
       />
     ) : <div className="template-library-editor-loading"><Spin size="large" /></div>;

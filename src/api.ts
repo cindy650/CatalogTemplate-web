@@ -30,6 +30,7 @@ import type {
   ProductCategory,
   ProductCategoryPayload,
   ProductCommonSpecValue,
+  SpineWidthFormula,
   ProductShop,
   Shop,
   ShopPayload,
@@ -402,6 +403,8 @@ function toProductCommonSpecValue(value: unknown): ProductCommonSpecValue {
   const pageCountOptions = Array.isArray(rawPageCountOptions)
     ? rawPageCountOptions.map(numberValue).filter((count) => count > 0)
     : [];
+  const parsedPageCount = numberValue(record.pageCount ?? record.page_count);
+  const pageCount = parsedPageCount > 0 ? parsedPageCount : pageCountOptions[0] ?? 50;
   const rawUnit = textValue(record.unit ?? record.size_unit).toLowerCase();
   const unit = rawUnit === 'mm' || rawUnit === 'cm' ? rawUnit : 'in';
   const rawSpineWidthMode = textValue(record.spineWidthMode ?? record.spine_width_mode);
@@ -409,8 +412,8 @@ function toProductCommonSpecValue(value: unknown): ProductCommonSpecValue {
     id: textValue(record.id),
     label: textValue(record.label),
     unit,
-    pageCount: numberValue(record.pageCount ?? record.page_count),
-    pageCountOptions,
+    pageCount,
+    pageCountOptions: pageCountOptions.length ? pageCountOptions : [pageCount],
     sideWidth: numberValue(record.sideWidth ?? record.side_width ?? record.single_side_width),
     sideHeight: numberValue(record.sideHeight ?? record.side_height ?? record.single_side_height),
     bleed: numberValue(record.bleed),
@@ -420,6 +423,24 @@ function toProductCommonSpecValue(value: unknown): ProductCommonSpecValue {
     maxSpineWidth: numberValue(record.maxSpineWidth ?? record.max_spine_width),
     spineBleed: numberValue(record.spineBleed ?? record.spine_bleed),
     paperThickness: numberValue(record.paperThickness ?? record.paper_thickness)
+  };
+}
+
+function toSpineWidthFormula(value: unknown): SpineWidthFormula | undefined {
+  let raw = value;
+  if (typeof raw === 'string' && raw.trim()) {
+    try { raw = JSON.parse(raw) as unknown; } catch { raw = undefined; }
+  }
+  const record = recordValue(raw);
+  if (Object.keys(record).length === 0) return undefined;
+  const unit = textValue(record.unit).toLowerCase();
+  return {
+    unit: unit === 'in' || unit === 'cm' || unit === 'mm' ? unit : 'cm',
+    pageCountCoefficient: numberValue(record.page_count_coefficient ?? record.pageCountCoefficient),
+    pageCountThickness: numberValue(record.page_count_thickness ?? record.pageCountThickness),
+    baseWidth: numberValue(record.base_width ?? record.baseWidth),
+    additionalWidth: numberValue(record.additional_width ?? record.additionalWidth),
+    spineBleed: numberValue(record.spine_bleed ?? record.spineBleed),
   };
 }
 
@@ -462,6 +483,9 @@ function toProductCategory(value: unknown): ProductCategory {
     specifications,
     specificationField: textValue(record.specification_field ?? record.specificationField),
     commonSpecValues: normalizeProductCommonSpecValues(rawCommonSpecValues),
+    ...(toSpineWidthFormula(record.spine_width_formula ?? record.spineWidthFormula)
+      ? { spineWidthFormula: toSpineWidthFormula(record.spine_width_formula ?? record.spineWidthFormula) }
+      : {}),
     ...normalizeProductSafeDistances(record),
     shopIds,
     shops: rawShops.map(toProductShop).filter((shop) => shop.id > 0),
@@ -873,6 +897,8 @@ function normalizeCatalogSizeTemplate(value: unknown): CatalogSizeTemplate {
   const pageCountOptions = Array.isArray(record.page_count_options)
     ? record.page_count_options.map(numberValue).filter((count) => count > 0)
     : [];
+  const parsedPageCount = numberValue(record.page_count ?? record.pageCount);
+  const pageCount = parsedPageCount > 0 ? parsedPageCount : pageCountOptions[0] ?? 50;
   const info = Array.isArray(record.size_template_info)
     ? record.size_template_info.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
     : [];
@@ -900,8 +926,8 @@ function normalizeCatalogSizeTemplate(value: unknown): CatalogSizeTemplate {
       || options[0]?.id
       || '',
     displayUnit: record.display_unit === 'mm' || record.display_unit === 'cm' ? record.display_unit : 'in',
-    pageCount: Math.max(1, numberValue(record.page_count) || 1),
-    pageCountOptions,
+    pageCount,
+    pageCountOptions: pageCountOptions.length ? pageCountOptions : [pageCount],
     sizeOptions: options,
     sizeTemplateInfo: info,
     fontLayouts,
@@ -1150,6 +1176,14 @@ export const browserAlbumApi = {
         specifications: payload.specifications,
         specification_field: payload.specificationField,
         common_spec_values: payload.commonSpecValues ?? [],
+        ...(payload.spineWidthFormula ? { spine_width_formula: {
+          unit: payload.spineWidthFormula.unit,
+          page_count_coefficient: payload.spineWidthFormula.pageCountCoefficient,
+          page_count_thickness: payload.spineWidthFormula.pageCountThickness,
+          base_width: payload.spineWidthFormula.baseWidth,
+          additional_width: payload.spineWidthFormula.additionalWidth,
+          spine_bleed: payload.spineWidthFormula.spineBleed,
+        } } : {}),
         back_cover_safe_distance_json: payload.backCoverSafeDistance,
         cover_safe_distance_json: payload.coverSafeDistance,
         spine_safe_distance_json: payload.spineSafeDistance,
@@ -1167,6 +1201,14 @@ export const browserAlbumApi = {
         ...(payload.specifications !== undefined ? { specifications: payload.specifications } : {}),
         ...(payload.specificationField !== undefined ? { specification_field: payload.specificationField } : {}),
         ...(payload.commonSpecValues !== undefined ? { common_spec_values: payload.commonSpecValues } : {}),
+        ...(payload.spineWidthFormula !== undefined ? { spine_width_formula: {
+          unit: payload.spineWidthFormula.unit,
+          page_count_coefficient: payload.spineWidthFormula.pageCountCoefficient,
+          page_count_thickness: payload.spineWidthFormula.pageCountThickness,
+          base_width: payload.spineWidthFormula.baseWidth,
+          additional_width: payload.spineWidthFormula.additionalWidth,
+          spine_bleed: payload.spineWidthFormula.spineBleed,
+        } } : {}),
         ...(payload.backCoverSafeDistance !== undefined ? { back_cover_safe_distance_json: payload.backCoverSafeDistance } : {}),
         ...(payload.coverSafeDistance !== undefined ? { cover_safe_distance_json: payload.coverSafeDistance } : {}),
         ...(payload.spineSafeDistance !== undefined ? { spine_safe_distance_json: payload.spineSafeDistance } : {}),

@@ -1,6 +1,8 @@
 import {
 	ArrowDownOutlined,
 	ArrowUpOutlined,
+	CaretDownOutlined,
+	CaretRightOutlined,
 	CopyOutlined,
 	DeleteOutlined,
 	EyeInvisibleOutlined,
@@ -22,6 +24,8 @@ type CanvasListObject = {
 	type?: string;
 	locked?: boolean;
 	visible?: boolean;
+	getObjects?: () => CanvasListObject[];
+	objects?: CanvasListObject[];
 };
 
 interface ImageMapListProps {
@@ -41,6 +45,7 @@ const resolveListItem = (obj: CanvasListObject) => {
 
 export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListProps) {
 	const isCropping = canvasRef ? canvasRef.handler?.interactionMode === 'crop' : false;
+	const [collapsedGroups, setCollapsedGroups] = React.useState<Set<string>>(() => new Set());
 	const objects =
 		(canvasRef?.canvas.getObjects() as CanvasListObject[] | undefined)?.filter(obj => {
 			if (obj.id === 'workarea') {
@@ -54,6 +59,11 @@ export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListPr
 		Object.entries(values).forEach(([key, value]) => {
 			handler.setByObject(obj as any, key, value);
 		});
+	};
+	const getGroupChildren = (obj: CanvasListObject) => {
+		if (obj.type !== 'group') return [];
+		if (typeof obj.getObjects === 'function') return obj.getObjects();
+		return Array.isArray(obj.objects) ? obj.objects : [];
 	};
 
 	return (
@@ -83,26 +93,48 @@ export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListPr
 			<div className="rde-canvas-list-items">
 				{objects.map(obj => {
 					const { title } = resolveListItem(obj);
-					const iconType = obj.superType === 'text' ? 'textbox' : obj.type;
+					const groupChildren = getGroupChildren(obj);
+					const isGroup = groupChildren.length > 0;
+					const groupExpanded = !collapsedGroups.has(obj.id as string);
+					const iconType = isGroup ? 'group' : obj.superType === 'text' ? 'textbox' : obj.type;
+					const hasSelectedChild = groupChildren.some(child => child.id && child.id === selectedItem?.id);
 					const className =
-						selectedItem?.id === obj.id ? 'rde-canvas-list-item selected-item' : 'rde-canvas-list-item';
+						selectedItem?.id === obj.id || hasSelectedChild ? 'rde-canvas-list-item selected-item' : 'rde-canvas-list-item';
 
-					return (
-						<Flex.Item
-							key={obj.id}
-							className={className}
-							flex="1"
-							style={{ cursor: 'pointer' }}
-							onClick={() => canvasRef?.handler.select(obj as any)}
-							onMouseDown={(event: React.MouseEvent) => event.preventDefault()}
-							onDoubleClick={() => canvasRef?.handler.zoomHandler.zoomToCenter()}
-						>
-							<Flex alignItems="center">
-								<ImageMapObjectIcon
-									className="rde-canvas-list-item-icon"
-									type={iconType}
-									style={{ width: 32 }}
-								/>
+						return (
+							<React.Fragment key={obj.id}>
+								<Flex.Item
+									className={className}
+									flex="1"
+									style={{ cursor: 'pointer' }}
+									onClick={() => canvasRef?.handler.select(obj as any)}
+									onMouseDown={(event: React.MouseEvent) => event.preventDefault()}
+									onDoubleClick={() => canvasRef?.handler.zoomHandler.zoomToCenter()}
+								>
+									<Flex alignItems="center">
+										{isGroup ? (
+													<Button
+														type="text"
+														className="rde-canvas-list-group-toggle"
+												icon={groupExpanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
+												aria-label={groupExpanded ? `收起${title}` : `展开${title}`}
+												aria-expanded={groupExpanded}
+												onClick={event => {
+													event.stopPropagation();
+													setCollapsedGroups(current => {
+														const next = new Set(current);
+														if (next.has(obj.id as string)) next.delete(obj.id as string);
+														else next.add(obj.id as string);
+														return next;
+													});
+												}}
+											/>
+										) : <span className="rde-canvas-list-group-toggle-spacer" />}
+										<ImageMapObjectIcon
+											className="rde-canvas-list-item-icon"
+											type={iconType}
+											style={{ width: 32 }}
+										/>
 								<div className="rde-canvas-list-item-text">{title}</div>
 								<Flex className="rde-canvas-list-item-actions" flex="0 0 auto" justifyContent="flex-end">
 									<Tooltip title={obj.visible === false ? '显示图层' : '隐藏图层'}>
@@ -170,8 +202,35 @@ export default function ImageMapList({ canvasRef, selectedItem }: ImageMapListPr
 										}}
 									/>
 								</Flex>
-							</Flex>
-						</Flex.Item>
+									</Flex>
+								</Flex.Item>
+								{isGroup && groupExpanded ? (
+									<div className="rde-canvas-list-group-children">
+										{groupChildren.map((child, index) => {
+											const childTitle = resolveListItem(child).title;
+											const childIconType = child.superType === 'text' ? 'textbox' : child.type;
+											return (
+													<div
+														className={`rde-canvas-list-child${selectedItem?.id === child.id ? ' selected-item' : ''}`}
+														key={child.id || `${obj.id}-child-${index}`}
+														onDoubleClick={event => {
+															event.stopPropagation();
+															// Keep the group active on Fabric so editing does not ungroup it.
+															canvasRef?.handler.select(obj as any);
+															canvasRef?.handler.onSelect?.(child as any);
+															canvasRef?.handler.flashObject(child as any);
+															}}
+														onMouseDown={event => event.preventDefault()}
+															style={{ cursor: 'text' }}
+														>
+													<ImageMapObjectIcon className="rde-canvas-list-item-icon" type={childIconType} style={{ width: 26 }} />
+													<div className="rde-canvas-list-item-text">{childTitle}</div>
+												</div>
+											);
+										})}
+									</div>
+								) : null}
+							</React.Fragment>
 					);
 				})}
 			</div>

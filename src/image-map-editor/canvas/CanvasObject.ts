@@ -5,10 +5,12 @@ import {
     Arrow,
     Chart,
     Cube,
+    DashedRect,
     Element,
     Gif,
     Iframe,
     Line,
+    Lines,
     Video
 } from './objects';
 import { Code } from './objects/Element';
@@ -74,6 +76,12 @@ const CanvasObject: CanvasObjectSchema = {
 	},
 	line: {
 		create: ({ points, ...option }: { points: any }) => new Line(points, option),
+	},
+	lines: {
+		create: (option: any) => new Lines(option),
+	},
+	dashedRect: {
+		create: (option: any) => new DashedRect(option),
 	},
 	arrow: {
 		create: ({ points, ...option }: { points: any }) => new Arrow(points, option),

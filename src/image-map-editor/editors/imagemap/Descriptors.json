@@ -111,6 +111,27 @@
 			}
 		},
 		{
+			"name": "线条",
+			"description": "",
+			"type": "shape",
+			"icon": {
+				"prefix": "fas",
+				"name": "bars"
+			},
+			"option": {
+				"type": "lines",
+				"width": 240,
+				"height": 80,
+				"name": "新建线条",
+				"lineThickness": 0.7,
+				"lineSpacing": 12,
+				"lineColor": "#7f7f7f",
+				"lineCount": 3,
+				"fill": "rgba(0, 0, 0, 0)",
+				"stroke": "rgba(0, 0, 0, 0)"
+			}
+		},
+		{
 			"name": "圆形",
 			"description": "",
 			"type": "shape",
@@ -122,6 +143,28 @@
 				"type": "circle",
 				"radius": 30,
 				"name": "新建形状"
+			}
+		},
+		{
+			"name": "虚线框",
+			"description": "",
+			"type": "shape",
+			"icon": {
+				"prefix": "fas",
+				"name": "border-style"
+			},
+			"option": {
+				"type": "dashedRect",
+				"width": 240,
+				"height": 120,
+				"name": "新建虚线框",
+				"lineColor": "#7f7f7f",
+				"dashed": true,
+				"cornerRadius": 0,
+				"lineThickness": 1,
+				"dashDensity": 8,
+				"fill": "rgba(0, 0, 0, 0)",
+				"stroke": "rgba(0, 0, 0, 0)"
 			}
 		},
 		{

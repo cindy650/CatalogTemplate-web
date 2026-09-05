@@ -28,13 +28,16 @@ interface NodePropertiesProps {
 const NodePropertiesForm = (props: NodePropertiesProps) => {
 	const { canvasRef, selectedItem, onChange } = props;
 	const [form] = Form.useForm();
-	const propertyType = selectedItem?.superType === 'text' ? 'textbox' : selectedItem?.type;
+	const rawType = String(selectedItem?.type || '');
+	const propertyType = selectedItem?.superType === 'text'
+		? 'textbox'
+		: Object.keys(PropertyDefinition).find(key => key.toLowerCase() === rawType.toLowerCase()) || rawType;
 	const propertySections = selectedItem && PropertyDefinition[propertyType]
 		? Object.entries(PropertyDefinition[propertyType])
 		: [];
 	const workareaUnit = canvasRef?.handler?.workarea?.unit;
 	React.useEffect(() => {
-		const isShape = ['rect', 'triangle', 'circle'].includes(String(selectedItem?.type || '').toLowerCase());
+		const isShape = ['rect', 'triangle', 'circle', 'lines', 'dashedrect'].includes(String(selectedItem?.type || '').toLowerCase());
 		const unit = workareaUnit === 'cm' || workareaUnit === 'mm' ? workareaUnit : 'in';
 		const factor = imageMapPixelsPerUnit[unit];
 		if (isShape) {

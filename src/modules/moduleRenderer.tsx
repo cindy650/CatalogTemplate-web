@@ -91,6 +91,7 @@ export function renderActiveModule(activeModule: ModuleId, context: ModuleRender
         <OrderTemplateEditorPage
           order={context.orderTemplateEditorOrder}
           shops={context.shops}
+          products={context.products}
           saveTemplate={context.saveOrderTemplate}
           onExit={context.closeOrderTemplateEditor}
         />

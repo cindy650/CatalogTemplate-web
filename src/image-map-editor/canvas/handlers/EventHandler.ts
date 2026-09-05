@@ -588,6 +588,10 @@ class EventHandler extends AbstractHandler {
 	 */
 	public scaling = (opt: FabricEvent) => {
 		const { target } = opt as any;
+		if (String(target?.type || '').toLowerCase() === 'dashedrect') {
+			// Keep custom dash geometry responsive while Fabric emits scaling events.
+			target.set('dirty', true);
+		}
 		if (this.handler.interactionMode === 'crop') {
 			this.handler.cropHandler.resize(opt);
 		}

@@ -101,6 +101,15 @@ export type ProductCommonSpecValue = {
   paperThickness: number;
 };
 
+export type SpineWidthFormula = {
+  unit: SizeTemplateUnit;
+  pageCountCoefficient: number;
+  pageCountThickness: number;
+  baseWidth: number;
+  additionalWidth: number;
+  spineBleed: number;
+};
+
 export type ProductCategory = {
   id: number;
   name: string;
@@ -110,6 +119,7 @@ export type ProductCategory = {
   specifications: string[];
   specificationField: string;
   commonSpecValues: ProductCommonSpecValue[];
+  spineWidthFormula?: SpineWidthFormula;
   backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
   spineSafeDistance: SafeDistance;
@@ -125,6 +135,7 @@ export type ProductCategoryPayload = {
   specifications: string[];
   specificationField: string;
   commonSpecValues?: ProductCommonSpecValue[];
+  spineWidthFormula?: SpineWidthFormula;
   backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
   spineSafeDistance: SafeDistance;

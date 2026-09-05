@@ -1,4 +1,5 @@
 import type { PrintUnit } from '../../canvas/models';
+import type { SpineWidthFormula } from '@shared/domain';
 
 export interface ImageMapSafeDistance {
 	top: number;
@@ -23,6 +24,7 @@ export interface ImageMapSizeSchemeValue {
 	minSpineWidth: number;
 	maxSpineWidth: number;
 	spineBleed: number;
+	spineWidthFormula?: SpineWidthFormula;
 	backCoverSafeDistance: ImageMapSafeDistance;
 	coverSafeDistance: ImageMapSafeDistance;
 	spineSafeDistance: ImageMapSafeDistance;
@@ -85,6 +87,14 @@ export const createImageMapSizeScheme = (
 		minSpineWidth: positiveNumber(value.minSpineWidth, 0.55),
 		maxSpineWidth: positiveNumber(value.maxSpineWidth, 0.7),
 		spineBleed: positiveNumber(value.spineBleed, 0.55),
+		...(value.spineWidthFormula ? { spineWidthFormula: {
+			unit: value.spineWidthFormula.unit === 'in' || value.spineWidthFormula.unit === 'mm' ? value.spineWidthFormula.unit : 'cm',
+			pageCountCoefficient: positiveNumber(value.spineWidthFormula.pageCountCoefficient, 0),
+			pageCountThickness: positiveNumber(value.spineWidthFormula.pageCountThickness, 0),
+			baseWidth: positiveNumber(value.spineWidthFormula.baseWidth, 0),
+			additionalWidth: positiveNumber(value.spineWidthFormula.additionalWidth, 0),
+			spineBleed: 0,
+		} } : {}),
 		backCoverSafeDistance: createSafeDistance(value.backCoverSafeDistance),
 		coverSafeDistance: createSafeDistance(value.coverSafeDistance),
 		spineSafeDistance: createSafeDistance(value.spineSafeDistance),
@@ -96,30 +106,29 @@ export const resolveImageMapSpineWidth = (
 	value: Partial<ImageMapSizeSchemeValue>,
 ) => {
 	const spineWidth = positiveNumber(value.spineWidth, 0);
+	const formula = value.spineWidthFormula;
+	if (!formula) {
+		// Changing the mode cannot resize a formula-less product. Its explicit
+		// width remains authoritative, with the configured bounds only acting as
+		// a fallback when no usable width has been stored.
+		if (spineWidth > 0) return spineWidth;
+		const minimum = positiveNumber(value.minSpineWidth, 0);
+		return minimum > 0 ? minimum : positiveNumber(value.maxSpineWidth, 0);
+	}
 	if (value.spineWidthMode !== 'by_page_count') {
 		return spineWidth;
 	}
-	const pageCount = positiveInteger(value.pageCount, 1);
-	const paperThickness = positiveNumber(value.paperThickness, 0);
-	const unit = value.unit === 'cm' || value.unit === 'mm' ? value.unit : 'in';
-	const thicknessPerPage = paperThickness > 0
-		? paperThickness / (unit === 'in' ? 25.4 : unit === 'cm' ? 10 : 1)
-		: spineWidth;
-	const calculated = thicknessPerPage * pageCount;
-	const minimum = positiveNumber(value.minSpineWidth, 0);
-	const maximum = positiveNumber(value.maxSpineWidth, 0);
 	const pageOptions = Array.isArray(value.pageCountOptions)
 		? value.pageCountOptions.map(item => positiveInteger(item, 0)).filter(item => item > 0).sort((left, right) => left - right)
 		: [];
-	const minimumPageCount = pageOptions[0];
-	const maximumPageCount = pageOptions.at(-1);
-	// The configured endpoints are authoritative: the smallest and largest
-	// selectable page counts must land on the configured spine bounds.
-	if (paperThickness > 0 && minimumPageCount !== undefined && maximumPageCount !== undefined && maximumPageCount > minimumPageCount) {
-		if (pageCount <= minimumPageCount) return minimum;
-		if (maximum > 0 && pageCount >= maximumPageCount) return maximum;
-	}
-	return Math.max(minimum, maximum > 0 ? Math.min(calculated, maximum) : calculated);
+	const pageCount = positiveInteger(value.pageCount, pageOptions[0] ?? 50);
+	const formulaUnit = formula.unit === 'in' || formula.unit === 'mm' ? formula.unit : 'cm';
+	const canvasUnit = value.unit === 'cm' || value.unit === 'mm' ? value.unit : 'in';
+	const unitToInches: Record<PrintUnit, number> = { in: 1, cm: 1 / 2.54, mm: 1 / 25.4 };
+	const formulaWidth = pageCount * positiveNumber(formula.pageCountCoefficient, 0) * positiveNumber(formula.pageCountThickness, 0)
+		+ positiveNumber(formula.baseWidth, 0)
+		+ positiveNumber(formula.additionalWidth, 0);
+	return Number((formulaWidth * unitToInches[formulaUnit] / unitToInches[canvasUnit]).toFixed(4));
 };
 
 const inchesPerUnit: Record<PrintUnit, number> = {

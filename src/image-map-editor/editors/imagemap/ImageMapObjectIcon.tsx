@@ -1,11 +1,13 @@
 import {
 	ApartmentOutlined,
 	ArrowRightOutlined,
+	BarsOutlined,
 	BorderOutlined,
 	BoxPlotOutlined,
 	CodeOutlined,
 	EnvironmentOutlined,
 	FileImageOutlined,
+	FileOutlined,
 	FontSizeOutlined,
 	LayoutOutlined,
 	LineChartOutlined,
@@ -29,20 +31,24 @@ const OBJECT_ICONS: Record<string, React.ComponentType<{ className?: string; sty
 	chart: LineChartOutlined,
 	circle: BorderOutlined,
 	cube: BoxPlotOutlined,
+	dashedRect: BorderOutlined,
 	element: CodeOutlined,
 	gif: FileImageOutlined,
 	iframe: LayoutOutlined,
 	image: PictureOutlined,
 	line: MinusOutlined,
+	lines: BarsOutlined,
 	polygon: ApartmentOutlined,
 	rect: BorderOutlined,
 	svg: PlaySquareOutlined,
 	textbox: FontSizeOutlined,
 	triangle: PlaySquareOutlined,
 	video: VideoCameraOutlined,
+	group: FileOutlined,
 };
 
 export default function ImageMapObjectIcon({ className, style, type }: ImageMapObjectIconProps) {
-	const IconComponent = OBJECT_ICONS[type || ''] || QuestionOutlined;
+	const normalizedType = type?.toLowerCase() === 'dashedrect' ? 'dashedRect' : type || '';
+	const IconComponent = OBJECT_ICONS[normalizedType] || QuestionOutlined;
 	return <IconComponent className={className} style={style} />;
 }
