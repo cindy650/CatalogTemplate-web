@@ -8,8 +8,8 @@ import {
   LayoutOutlined,
   PictureOutlined,
   ColumnWidthOutlined,
-  DeleteOutlined,
   EditOutlined,
+  ExperimentOutlined,
   PlusOutlined,
   ShopOutlined,
   ShoppingCartOutlined,
@@ -45,6 +45,14 @@ export const moduleDefinitions: ModuleDefinition[] = [
     breadcrumb: ['模板库'],
     icon: <AppstoreOutlined />
   },
+  {
+    id: 'font-layouts',
+    label: '字体布局',
+    path: '/font-layouts',
+    breadcrumb: ['模板管理', '字体布局'],
+    icon: <LayoutOutlined />,
+    menuVisible: false
+  },
   { id: 'inner-pages', label: '内页模块', path: '/inner-pages', breadcrumb: ['内页模块'], icon: <BookOutlined /> },
   { id: 'text-generation-rules', label: '模板规则描述', path: '/text-generation-rules', breadcrumb: ['模板规则描述'], icon: <FileTextOutlined /> },
   {
@@ -72,6 +80,14 @@ export const moduleDefinitions: ModuleDefinition[] = [
     menuVisible: false
   },
   {
+    id: 'ui-prototype',
+    label: 'UI 原型',
+    path: '/ui-prototype',
+    breadcrumb: ['设计验证', 'UI 原型'],
+    icon: <ExperimentOutlined />,
+    menuVisible: false
+  },
+  {
     id: 'fonts',
     label: '字体库',
     path: '/fonts',
@@ -85,6 +101,8 @@ export const moduleDefinitions: ModuleDefinition[] = [
 const sizeTemplateShopKeyPrefix = 'size-templates-shop-';
 const innerPagesShopKeyPrefix = 'inner-pages-shop-';
 const innerPagesProductMarker = '-product-';
+const fontLayoutsShopKeyPrefix = 'font-layouts-shop-';
+const fontLayoutsProductMarker = '-product-';
 const productKeyPrefix = 'template-library-product-';
 const productAllKeySuffix = '-all';
 const productShopKeySuffix = '-shop-';
@@ -96,7 +114,6 @@ function productMenuLabel(product: ProductCategory, actions?: ProductMenuActions
       <span className="sidebar-product-name">{product.name || '未命名产品'}</span>
       {actions && <span className="sidebar-product-actions" onClick={(event) => event.stopPropagation()}>
         <button type="button" aria-label={`编辑产品 ${product.name}`} title="编辑产品" onClick={() => actions.onEdit(product)}><EditOutlined /></button>
-        <button type="button" aria-label={`删除产品 ${product.name}`} title="删除产品" onClick={() => actions.onDelete(product)}><DeleteOutlined /></button>
       </span>}
     </span>
   );
@@ -143,6 +160,27 @@ export function getModuleMenuItems(shops: Shop[], products: ProductCategory[] = 
             : [{ key: `${getInnerPagesShopMenuKey(shop.id)}-empty`, label: '暂无产品', disabled: true }]
         };
       })
+    } : id === 'font-layouts' ? {
+      key: id,
+      icon,
+      label,
+      children: shops.map((shop) => {
+        const shopProducts = products.filter((product) => (
+          product.shopIds.includes(shop.id) || product.shops.some((item) => item.id === shop.id)
+        ));
+        return {
+          key: getFontLayoutsShopMenuKey(shop.id),
+          className: 'sidebar-product-submenu',
+          label: shop.shopName || shop.shop || '未命名店铺',
+          children: shopProducts.length > 0
+            ? shopProducts.map((product) => ({
+              key: getFontLayoutsProductMenuKey(shop.id, product.id),
+              className: 'sidebar-template-leaf',
+              label: product.name || '未命名产品'
+            }))
+            : [{ key: `${getFontLayoutsShopMenuKey(shop.id)}-empty`, label: '暂无产品', disabled: true }]
+        };
+      })
     } : id === 'size-templates' ? {
       key: id,
       icon,
@@ -169,6 +207,22 @@ export function getInnerPagesProductMenuKey(shopId: number, productId: number): 
 export function getInnerPagesMenuSelection(menuKey: string): { shopId: number; productId: number } | undefined {
   if (!menuKey.startsWith(innerPagesShopKeyPrefix) || !menuKey.includes(innerPagesProductMarker)) return undefined;
   const [shopPart, productPart] = menuKey.slice(innerPagesShopKeyPrefix.length).split(innerPagesProductMarker);
+  const shopId = Number(shopPart);
+  const productId = Number(productPart);
+  return Number.isInteger(shopId) && Number.isInteger(productId) ? { shopId, productId } : undefined;
+}
+
+export function getFontLayoutsShopMenuKey(shopId: number): string {
+  return `${fontLayoutsShopKeyPrefix}${shopId}`;
+}
+
+export function getFontLayoutsProductMenuKey(shopId: number, productId: number): string {
+  return `${getFontLayoutsShopMenuKey(shopId)}${fontLayoutsProductMarker}${productId}`;
+}
+
+export function getFontLayoutsMenuSelection(menuKey: string): { shopId: number; productId: number } | undefined {
+  if (!menuKey.startsWith(fontLayoutsShopKeyPrefix) || !menuKey.includes(fontLayoutsProductMarker)) return undefined;
+  const [shopPart, productPart] = menuKey.slice(fontLayoutsShopKeyPrefix.length).split(fontLayoutsProductMarker);
   const shopId = Number(shopPart);
   const productId = Number(productPart);
   return Number.isInteger(shopId) && Number.isInteger(productId) ? { shopId, productId } : undefined;
@@ -207,7 +261,8 @@ export function isProductAddMenuKey(menuKey: string): boolean { return menuKey =
 
 export function normalizeRoutePath(routePath: string): string {
   const hashlessPath = routePath.replace(/^#/, '').trim();
-  const pathWithSlash = hashlessPath.startsWith('/') ? hashlessPath : `/${hashlessPath}`;
+  const pathOnly = hashlessPath.split(/[?#]/, 1)[0];
+  const pathWithSlash = pathOnly.startsWith('/') ? pathOnly : `/${pathOnly}`;
   const normalized = pathWithSlash.replace(/\/+$/, '');
   return normalized || getModuleDefinition(defaultModuleId).path;
 }

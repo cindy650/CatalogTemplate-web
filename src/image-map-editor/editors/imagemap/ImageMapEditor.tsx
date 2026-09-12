@@ -1,4 +1,4 @@
-import { CheckCircleOutlined, FileImageOutlined, PictureOutlined, SaveOutlined, SelectOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, FileImageOutlined, MinusCircleOutlined, PictureOutlined, SaveOutlined, SelectOutlined, SyncOutlined } from '@ant-design/icons';
 import { Badge, Button, Menu, Popconfirm, Spin, Tooltip, message } from 'antd';
 import { debounce } from 'lodash-es';
 import React, { Component } from 'react';
@@ -24,6 +24,7 @@ import ImageMapFontLayouts, {
 	type ImageMapFontLayoutDeleter,
 	type ImageMapFontLayoutLayerData,
 	type ImageMapFontLayoutLoader,
+	type ImageMapFontLayoutActions,
 	type ImageMapFontLayoutProductLoader,
 	type ImageMapFontLayoutOption,
 	type ImageMapFontLayoutSizeOption,
@@ -40,7 +41,7 @@ import ImageMapPreview from './ImageMapPreview';
 import {
 	createImageMapSizeScheme,
 	createImageMapSizeSchemes,
-	resolveImageMapSpineWidth,
+	withResolvedImageMapSpine,
 	type ImageMapSizeSchemeValue,
 } from './ImageMapSizeScheme';
 import ImageMapTitle from './ImageMapTitle';
@@ -147,7 +148,6 @@ const filterAssetDescriptors = (descriptors: DescriptorMap): DescriptorMap =>
 const editorActivities: Array<{ key: ImageMapEditorActivity; label: string; icon: string }> = [
 	{ key: 'basicInfo', label: '基本信息', icon: 'info' },
 	{ key: 'canvas', label: '尺寸方案', icon: 'map' },
-	{ key: 'fontLayouts', label: '字体布局', icon: 'fontLayouts' },
 	{ key: 'assets', label: '素材', icon: 'shapes' },
 ];
 
@@ -176,6 +176,7 @@ interface ImageMapEditorState {
 	savingDocument: boolean;
 	textGenerationRules: ImageMapTextGenerationRule[];
 	textGenerationRulesLoading: boolean;
+	selectedFontLayout?: ImageMapFontLayoutOption;
 }
 
 export interface ImageMapEditorDocumentValue {
@@ -197,7 +198,12 @@ export interface ImageMapEditorProps {
 	initialSizeSchemes?: Partial<ImageMapSizeSchemeValue>[];
 	initialActiveSizeSchemeId?: string;
 	selectedFontLayoutId?: number;
+	/** Enables create/update/delete controls in the layout panel. Template editors leave this disabled. */
+	fontLayoutManagementEnabled?: boolean;
+	fontLayoutSyncEnabled?: boolean;
 	onSizeSchemesChange?: (value: ImageMapSizeSchemeValue[]) => void;
+	onRegisterSaveSizeScheme?: (handler: () => void) => void;
+	showHeaderSizeSchemeSave?: boolean;
 	onSizeSchemeLayersChange?: (sizeOptionId: string, layers: ImageMapFontLayoutLayerData) => void;
 	onSaveSizeSchemes?: (value: ImageMapSizeSchemeValue[], activeSizeSchemeId: string, layers?: ImageMapFontLayoutLayerData, fontLayoutId?: number) => void | Promise<void>;
 	createFontLayout?: ImageMapFontLayoutCreator;
@@ -217,6 +223,8 @@ export interface ImageMapEditorProps {
 	}>>;
 	loadTextGenerationRules?: () => Promise<ImageMapTextGenerationRule[]>;
 	applyTextFont?: (family: string, filePath: string) => Promise<void>;
+	uploadPreviewImage?: (file: File) => Promise<string>;
+	onPreviewImageChange?: (url: string) => void;
 	saveFontLayout?: ImageMapFontLayoutSaver;
 	sizeOptions?: ImageMapFontLayoutSizeOption[];
 	sizeTemplateId?: number;
@@ -224,14 +232,24 @@ export interface ImageMapEditorProps {
 	updateFontLayout?: ImageMapFontLayoutUpdater;
 	onSaveDocument?: (document: ImageMapEditorDocumentValue, previewFile?: File) => void | Promise<void>;
 	saveSuccessMessage?: string;
+	saveButtonLabel?: string;
+	saveButtonPrimary?: boolean;
+	headerActionsBeforeSave?: React.ReactNode;
 	saveLocation?: 'header' | 'basicInfo';
 	saveConfirmTitle?: string;
 	alwaysEnableSave?: boolean;
+	/** Hide the JSON download/import controls in embedded editors. */
+	hideJsonImportExport?: boolean;
 	hiddenActivities?: ImageMapEditorActivity[];
 	/** Use a plain single-page workarea instead of cover/spine geometry. */
 	innerPageMode?: boolean;
 	/** Skip automatic text safe-area correction for explicitly exempt products. */
 	skipTextSafeAreaCheck?: boolean;
+	/** Use the compact physical-dimension panel for standalone layout editing. */
+	simplifiedSizeScheme?: boolean;
+	/** Hide the canvas-property section when editing an existing template. */
+	hideCanvasSection?: boolean;
+	basicInfoEntityLabel?: string;
 	onExit?: () => void;
 	exitLabel?: string;
 }
@@ -281,7 +299,10 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 	private textGenerationRulesRequestId = 0;
 	private fontLayoutLoadCount = 0;
 	private selectedFontLayoutId: ImageMapFontLayoutOption['id'] | undefined = this.props.selectedFontLayoutId;
+	private fontLayoutClearHandler?: () => void;
+	private fontLayoutSyncHandler?: () => void;
 	private sizeLayoutRequestId = 0;
+	private saveSizeSchemeHandler: () => void = () => undefined;
 	private visibleActivities = editorActivities.filter(
 		activity => !this.props.hiddenActivities?.includes(activity.key),
 	);
@@ -314,6 +335,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		savingDocument: false,
 		textGenerationRules: [],
 		textGenerationRulesLoading: false,
+		selectedFontLayout: undefined,
 	};
 
 	setCanvasRef = (ref: CanvasInstance | null) => {
@@ -347,8 +369,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 					handler.workareaHandler.setInnerPageSize(activeSizeScheme);
 				} else {
 					handler.workareaHandler.setPrintDimensions({
-						...activeSizeScheme,
-						spineWidth: resolveImageMapSpineWidth(activeSizeScheme),
+						...withResolvedImageMapSpine(activeSizeScheme),
 						canvasRows: 1,
 					});
 				}
@@ -375,7 +396,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			const handler = handlerOverride ?? this.canvasRef?.handler;
 			handler?.clear(false);
 			if (handler && this.props.innerPageMode) handler.workareaHandler.setInnerPageSize(sizeScheme);
-			else handler?.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
+			else handler?.workareaHandler.setPrintDimensions({ ...withResolvedImageMapSpine(sizeScheme), canvasRows: 1 });
 			return;
 		}
 		const directLayers = await this.props.loadSizeSchemeLayers?.(sizeScheme.id);
@@ -393,7 +414,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		}
 		const handler = handlerOverride ?? this.canvasRef?.handler;
 		if (handler && this.props.innerPageMode) handler.workareaHandler.setInnerPageSize(sizeScheme);
-		else handler?.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
+		else handler?.workareaHandler.setPrintDimensions({ ...withResolvedImageMapSpine(sizeScheme), canvasRows: 1 });
 	};
 
 	loadActiveSizeSchemeFontLayout = async () => {
@@ -404,13 +425,19 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		if (layoutId === undefined || sizeTemplateId === undefined || !sizeScheme || !loadFontLayoutSize) return;
 		const requestId = ++this.sizeLayoutRequestId;
 		this.setState({ fontLayoutLayersLoading: true });
-		const result = await loadFontLayoutSize(layoutId, sizeTemplateId, sizeScheme.id);
-		if (requestId !== this.sizeLayoutRequestId || !this.canvasRef) return;
-		await this.importFontLayoutLayers(result.layers);
-		if (result.message) {
-			message.info(result.message);
-		} else if (result.usingBaseLayers || result.layersSource === 'base') {
-			message.info('当前规格暂无独立图层数据，已使用基础字体布局模板');
+		try {
+			const result = await loadFontLayoutSize(layoutId, sizeTemplateId, sizeScheme.id);
+			if (requestId !== this.sizeLayoutRequestId || !this.canvasRef) return;
+			await this.importFontLayoutLayers(result.layers);
+			if (result.message) {
+				message.info(result.message);
+			} else if (result.usingBaseLayers || result.layersSource === 'base') {
+				message.info('当前规格暂无独立图层数据，已使用基础字体布局模板');
+			}
+		} finally {
+			if (requestId === this.sizeLayoutRequestId) {
+				this.setState({ fontLayoutLayersLoading: false });
+			}
 		}
 	};
 
@@ -1220,7 +1247,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				void this.canvasRef?.handler.workareaHandler.setImage('', true);
 				this.canvasRef?.handler.workareaHandler.setInnerPageSize(nextSizeScheme);
 			}
-			else this.canvasRef?.handler.workareaHandler.setPrintDimensions({ ...nextSizeScheme, spineWidth: resolveImageMapSpineWidth(nextSizeScheme) });
+			else this.canvasRef?.handler.workareaHandler.setPrintDimensions(withResolvedImageMapSpine(nextSizeScheme));
 			this.props.onSizeSchemesChange?.(sizeSchemes);
 		},
 		onSaveSizeScheme: (values: Omit<ImageMapSizeSchemeValue, 'id'>) => {
@@ -1300,7 +1327,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			}, () => {
 				if (deletingActive && nextActiveSizeScheme) {
 					if (this.props.innerPageMode) this.canvasRef?.handler.workareaHandler.setInnerPageSize(nextActiveSizeScheme);
-					else this.canvasRef?.handler.workareaHandler.setPrintDimensions({ ...nextActiveSizeScheme, spineWidth: resolveImageMapSpineWidth(nextActiveSizeScheme) });
+					else this.canvasRef?.handler.workareaHandler.setPrintDimensions(withResolvedImageMapSpine(nextActiveSizeScheme));
 				}
 			});
 			this.props.onSizeSchemesChange?.(sizeSchemes);
@@ -1336,8 +1363,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 						this.canvasRef.handler.clear(false);
 						if (this.props.innerPageMode) this.canvasRef.handler.workareaHandler.setInnerPageSize(sizeScheme);
 						else this.canvasRef.handler.workareaHandler.setPrintDimensions({
-							...sizeScheme,
-							spineWidth: resolveImageMapSpineWidth(sizeScheme),
+							...withResolvedImageMapSpine(sizeScheme),
 							canvasRows: 1,
 						});
 						return;
@@ -1355,7 +1381,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 						return;
 					}
 					if (this.props.innerPageMode) this.canvasRef.handler.workareaHandler.setInnerPageSize(sizeScheme);
-					else this.canvasRef.handler.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
+					else this.canvasRef.handler.workareaHandler.setPrintDimensions({ ...withResolvedImageMapSpine(sizeScheme), canvasRows: 1 });
 				}).catch(error => {
 					if (requestId === this.sizeLayoutRequestId) message.error(error instanceof Error ? error.message : String(error));
 				}).finally(() => {
@@ -1368,7 +1394,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			}
 			if (layoutId === undefined || sizeTemplateId === undefined || !loadFontLayoutSize) {
 				if (this.props.innerPageMode) this.canvasRef?.handler.workareaHandler.setInnerPageSize(sizeScheme);
-				else this.canvasRef?.handler.workareaHandler.setPrintDimensions({ ...sizeScheme, spineWidth: resolveImageMapSpineWidth(sizeScheme), canvasRows: 1 });
+				else this.canvasRef?.handler.workareaHandler.setPrintDimensions({ ...withResolvedImageMapSpine(sizeScheme), canvasRows: 1 });
 				return;
 			}
 			const requestId = ++this.sizeLayoutRequestId;
@@ -1379,7 +1405,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 					if (result.message) {
 						message.info(result.message);
 					} else if (result.usingBaseLayers || result.layersSource === 'base') {
-						message.info('当前规格暂无独立图层数据，已使用基础字体布局模板');
+					message.info('当前规格暂无独立图层数据，已使用基础字体布局模板');
 					}
 				});
 			}).catch(error => {
@@ -1456,10 +1482,11 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		if (!workarea) {
 			return { objects: [], animations: [], styles: [], dataSources: [] };
 		}
+		const resolvedSpine = withResolvedImageMapSpine(sizeScheme);
 		const dimensions = handler.workareaHandler.getPrintDimensionData({
-			...sizeScheme,
-			spineWidth: canvasRows === 2 ? 0 : resolveImageMapSpineWidth(sizeScheme),
-			spineBleed: canvasRows === 2 ? 0 : sizeScheme.spineBleed,
+			...resolvedSpine,
+			spineWidth: canvasRows === 2 ? 0 : resolvedSpine.spineWidth,
+			spineBleed: canvasRows === 2 ? 0 : resolvedSpine.spineBleed,
 			canvasRows,
 		});
 		return {
@@ -1574,8 +1601,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				verticalBleed: Number(activeSizeScheme.verticalBleed ?? activeSizeScheme.bleed),
 			} : activeSizeScheme;
 			handler.workareaHandler.setPrintDimensions({
-				...restoredSizeScheme,
-				spineWidth: resolveImageMapSpineWidth(restoredSizeScheme),
+				...withResolvedImageMapSpine(restoredSizeScheme),
 					canvasRows: serializedWorkarea?.canvasRows === 2 ? 2 : 1,
 					canvasRowGap: Number(serializedWorkarea?.canvasRowGap ?? activeSizeScheme.canvasRowGap ?? 0),
 			});
@@ -1646,6 +1672,16 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		}
 	};
 
+	handleFontLayoutSelection = (layout?: ImageMapFontLayoutOption) => {
+		this.selectedFontLayoutId = layout?.id;
+		this.setState({ selectedFontLayout: layout });
+	};
+
+	handleFontLayoutActions = (actions: ImageMapFontLayoutActions) => {
+		this.fontLayoutClearHandler = actions.clear;
+		this.fontLayoutSyncHandler = actions.sync;
+	};
+
 	render() {
 		const canvasTheme = getEditorCanvasTheme(this.context.theme);
 		const {
@@ -1666,6 +1702,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 			textGenerationRulesLoading,
 			fontLayoutFontsLoading,
 			fontLayoutLayersLoading,
+			selectedFontLayout,
 			objectMeasurementRevision,
 			objects,
 			activeActivity,
@@ -1702,21 +1739,52 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 		} = this.handlers;
 		const canvasObjects = this.canvasRef?.handler.getObjects() || [];
 		const summary = summarizeImageMap(canvasObjects, selectedItem);
+		const isLayoutSaveButton = this.props.saveButtonLabel === '保存字体布局';
+		const isInnerPageSaveButton = this.props.innerPageMode === true;
+		const saveButtonLabel = this.props.saveButtonLabel ?? (isInnerPageSaveButton ? '保存内页' : '保存');
 		const saveDocumentButton = (
 			<Button
-				className="rde-action-btn"
-				type="text"
+				className={`rde-action-btn${isLayoutSaveButton ? ' rde-layout-save-btn' : ''}${isInnerPageSaveButton ? ' rde-inner-page-save-btn' : ''}${this.props.saveButtonPrimary ? ' rde-order-save-btn' : ''}`}
+				type={isLayoutSaveButton || isInnerPageSaveButton || this.props.saveButtonPrimary ? 'primary' : 'text'}
 				size="small"
 				icon={<SaveOutlined />}
-				disabled={savingDocument || (!editing && !this.props.alwaysEnableSave)}
+				disabled={savingDocument}
 				onClick={this.props.saveConfirmTitle ? undefined : () => void this.saveEditorDocument()}
 			>
-				保存
+				{saveButtonLabel}
 			</Button>
 		);
+		const saveSizeSchemeButton = this.props.showHeaderSizeSchemeSave ? (
+			<Button
+				className="rde-action-btn rde-size-scheme-save-btn"
+				type="primary"
+				size="small"
+				icon={<SaveOutlined />}
+				onClick={() => this.saveSizeSchemeHandler()}
+			>
+				保存尺寸方案
+			</Button>
+		) : null;
+		const fontLayoutActions = selectedFontLayout ? (
+			<React.Fragment>
+				<Button
+					className="rde-font-layout-toolbar-action"
+					type="primary"
+					size="small"
+					icon={<SyncOutlined />}
+					disabled={!this.fontLayoutSyncHandler}
+					onClick={() => this.fontLayoutSyncHandler?.()}
+				>
+					同步尺寸
+				</Button>
+			</React.Fragment>
+		) : null;
 
 		const action = (
 			<React.Fragment>
+				{fontLayoutActions}
+				{saveSizeSchemeButton}
+				{this.props.headerActionsBeforeSave}
 				{this.props.onSaveDocument && this.props.saveLocation !== 'basicInfo' ? (
 					this.props.saveConfirmTitle ? (
 						<Popconfirm
@@ -1725,48 +1793,11 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 							okText="确认修改"
 							cancelText="取消"
 							onConfirm={() => void this.saveEditorDocument()}
-					>
+						>
 							{saveDocumentButton}
 						</Popconfirm>
 					) : saveDocumentButton
 				) : null}
-				<CommonButton
-					className="rde-action-btn"
-					variant="text"
-					icon="file-download"
-					disabled={!editing}
-					tooltipTitle={i18next.t('action.download')}
-					onClick={onDownload}
-					tooltipPlacement="bottomRight"
-				>
-					导出
-				</CommonButton>
-				{editing ? (
-					<Popconfirm
-						title={i18next.t('imagemap.imagemap-editing-confirm')}
-						okText={i18next.t('action.ok')}
-						cancelText={i18next.t('action.cancel')}
-						onConfirm={onUpload}
-						placement="bottomRight"
-					>
-						<CommonButton
-							className="rde-action-btn"
-							shape="circle"
-							icon="file-upload"
-							tooltipTitle={i18next.t('action.upload')}
-							tooltipPlacement="bottomRight"
-						/>
-					</Popconfirm>
-				) : (
-					<CommonButton
-						className="rde-action-btn"
-						shape="circle"
-						icon="file-upload"
-						tooltipTitle={i18next.t('action.upload')}
-						tooltipPlacement="bottomRight"
-						onClick={onUpload}
-					/>
-				)}
 				<Button
 					className="rde-action-btn"
 					type="text"
@@ -1798,6 +1829,53 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				</Tooltip>
 			</React.Fragment>
 		);
+
+		const fontLayoutContent = this.props.hiddenActivities?.includes('fontLayouts') ? null : (
+			<ImageMapFontLayouts
+				managementEnabled={this.props.fontLayoutManagementEnabled}
+				syncEnabled={this.props.fontLayoutSyncEnabled}
+				shops={this.props.shops ?? []}
+				defaultShopId={basicInfo.shopId}
+				createFontLayout={this.props.createFontLayout}
+				createEmptyCanvasLayers={this.createEmptyCanvasLayers}
+				deleteFontLayout={this.props.deleteFontLayout}
+				getCanvasLayers={() => this.getCanvasFontLayoutLayers(true)}
+				loadFontLayoutCategories={this.props.loadFontLayoutCategories}
+				loadFontLayoutProducts={this.props.loadFontLayoutProducts}
+				defaultProductId={this.props.initialProductId}
+				loadFontLayouts={this.props.loadFontLayouts}
+				loadFontLayoutSizeOptions={this.props.loadFontLayoutSizeOptions}
+				onSelectFontLayout={this.applyFontLayout}
+			selectedFontLayoutId={typeof this.selectedFontLayoutId === 'number' ? this.selectedFontLayoutId : undefined}
+			onSelectedFontLayoutChange={this.handleFontLayoutSelection}
+			onRegisterFontLayoutActions={this.handleFontLayoutActions}
+			onRefreshFontLayoutSize={this.loadActiveSizeSchemeFontLayout}
+				renderActionsExternally
+				saveFontLayout={this.props.saveFontLayout}
+				sizeOptions={sizeSchemes.map(scheme => ({ id: scheme.id, label: scheme.label }))}
+				sizeTemplateId={this.props.sizeTemplateId}
+				syncFontLayoutSizeOptions={this.props.syncFontLayoutSizeOptions}
+				updateFontLayout={this.props.updateFontLayout}
+			/>
+		);
+		const fontLayoutSelection = selectedFontLayout ? (
+			<div className="rde-font-layout-selected" role="status">
+				<span className="rde-font-layout-selected-label" title={selectedFontLayout.name}>
+					已选择：{selectedFontLayout.name}
+					{(selectedFontLayout.productCategoryName || selectedFontLayout.category) ? ` · ${selectedFontLayout.productCategoryName || selectedFontLayout.category}` : ''}
+				</span>
+				<Tooltip title="取消选择字体布局">
+					<Button
+						type="text"
+						danger
+						size="small"
+						icon={<MinusCircleOutlined />}
+						aria-label="取消选择字体布局"
+						onClick={() => this.fontLayoutClearHandler?.()}
+					/>
+				</Tooltip>
+			</div>
+		) : null;
 
 		const title = (
 			<ImageMapTitle
@@ -1836,30 +1914,41 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 					items={this.visibleActivities}
 				/>
 				<div className="rde-imagemap-activity-panel">
-					{activeActivity === 'basicInfo' ? (
+					<div className="rde-imagemap-activity-view" hidden={activeActivity !== 'basicInfo'}>
 						<ImageMapBasicInfo
 							shops={this.props.shops ?? []}
 							value={basicInfo}
 							onChange={this.handlers.onBasicInfoChange}
 							previewImage={this.props.templatePreviewImage}
+							uploadPreviewImage={this.props.uploadPreviewImage}
+							onPreviewImageChange={this.props.onPreviewImageChange}
+							entityLabel={this.props.basicInfoEntityLabel}
 							saving={savingDocument}
 							onSave={this.props.onSaveDocument && this.props.saveLocation === 'basicInfo'
 								? (previewFile) => this.saveEditorDocument(previewFile)
 								: undefined}
 						/>
-					) : activeActivity === 'canvas' ? (
+					</div>
+					<div className="rde-imagemap-activity-view" hidden={activeActivity !== 'canvas'}>
 						<ImageMapCanvasSettings
 							canvasRef={this.canvasRef}
 							onChange={onChange}
 							sizeSchemes={sizeSchemes}
 							activeSizeSchemeId={activeSizeSchemeId}
 							onAddSizeScheme={onAddSizeScheme}
-							onDeleteSizeScheme={onDeleteSizeScheme}
-							onSaveSizeScheme={onSaveSizeScheme}
-							onSelectSizeScheme={onSelectSizeScheme}
+								onDeleteSizeScheme={onDeleteSizeScheme}
+								onSaveSizeScheme={onSaveSizeScheme}
+								onRegisterSaveSizeScheme={handler => { this.saveSizeSchemeHandler = handler; }}
+								hideSizeSchemeSaveButton={this.props.showHeaderSizeSchemeSave}
+								onSelectSizeScheme={onSelectSizeScheme}
 							innerPageMode={this.props.innerPageMode}
+							simplified={this.props.simplifiedSizeScheme}
+							hideCanvasSection={this.props.hideCanvasSection}
+							fontLayoutContent={fontLayoutContent}
+							fontLayoutSelection={fontLayoutSelection}
 						/>
-					) : activeActivity === 'assets' ? (
+					</div>
+					<div className="rde-imagemap-activity-view" hidden={activeActivity !== 'assets'}>
 						<ImageMapItems
 							ref={(ref: ImageMapItemsHandle | null) => {
 								this.itemsRef = ref;
@@ -1869,30 +1958,7 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 							mode="assets"
 							selectedItem={selectedItem}
 						/>
-					) : null}
-					{this.visibleActivities.some(activity => activity.key === 'fontLayouts') ? (
-						<div className={`rde-imagemap-font-layouts-keepalive${activeActivity === 'fontLayouts' ? ' is-active' : ''}`}>
-							<ImageMapFontLayouts
-							shops={this.props.shops ?? []}
-							defaultShopId={basicInfo.shopId}
-							createFontLayout={this.props.createFontLayout}
-							createEmptyCanvasLayers={this.createEmptyCanvasLayers}
-							deleteFontLayout={this.props.deleteFontLayout}
-							getCanvasLayers={() => this.getCanvasFontLayoutLayers(true)}
-							loadFontLayoutCategories={this.props.loadFontLayoutCategories}
-							loadFontLayoutProducts={this.props.loadFontLayoutProducts}
-							defaultProductId={this.props.initialProductId}
-							loadFontLayouts={this.props.loadFontLayouts}
-							loadFontLayoutSizeOptions={this.props.loadFontLayoutSizeOptions}
-							onSelectFontLayout={this.applyFontLayout}
-							saveFontLayout={this.props.saveFontLayout}
-							sizeOptions={sizeSchemes.map(scheme => ({ id: scheme.id, label: scheme.label }))}
-							sizeTemplateId={this.props.sizeTemplateId}
-							syncFontLayoutSizeOptions={this.props.syncFontLayoutSizeOptions}
-							updateFontLayout={this.props.updateFontLayout}
-							/>
-						</div>
-					) : null}
+					</div>
 				</div>
 				<section className="rde-editor-workspace rde-imagemap-workspace">
 					<div className="rde-editor-header-toolbar">
@@ -1986,6 +2052,18 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 						fontFamiliesLoading={fontFamiliesLoading}
 						onCenterHorizontally={() => this.canvasRef?.handler.alignmentHandler.centerHorizontallyInRegion()}
 						onCenterVertically={() => this.canvasRef?.handler.alignmentHandler.centerVerticallyInRegion()}
+						onTextTransform={(mode) => {
+							if (!selectedItem || (selectedItem.superType !== 'text' && selectedItem.type !== 'textbox' && selectedItem.type !== 'i-text')) return;
+							const source = String(selectedItem.text ?? '');
+							const text = mode === 'uppercase'
+								? source.toUpperCase()
+								: source.replace(/(^|[\s\-_\/]+)([a-z])/gi, (_match, prefix: string, letter: string) => `${prefix}${letter.toUpperCase()}`);
+							if (text === source) return;
+							const target = selectedItem.group ? selectedItem : undefined;
+							this.canvasRef?.handler.set('text', text, target);
+							this.canvasRef?.canvas.requestRenderAll();
+							this.changeEditing(true);
+						}}
 						onFontSearch={this.onTextFontSearch}
 						onFontSelect={this.onTextFontSelect}
 						textGenerationRules={textGenerationRules}

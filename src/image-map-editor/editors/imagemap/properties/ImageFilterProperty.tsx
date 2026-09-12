@@ -1,4 +1,4 @@
-import { Col, Form, Row, Slider, Tag } from 'antd';
+import { Form, Slider, Tag } from 'antd';
 import i18next from 'i18next';
 import React from 'react';
 
@@ -6,7 +6,14 @@ type ImageFilterData = {
 	filters: any[];
 };
 
-const simpleFilters = [
+type FilterToggleDefinition = {
+	key: string;
+	label: string;
+	index: number;
+	text: string;
+};
+
+const simpleFilters: FilterToggleDefinition[] = [
 	{ key: 'grayscale', label: 'imagemap.filter.grayscale', index: 0, text: 'G' },
 	{ key: 'invert', label: 'imagemap.filter.invert', index: 1, text: 'I' },
 	{ key: 'sepia', label: 'imagemap.filter.sepia', index: 3, text: 'S' },
@@ -19,7 +26,48 @@ const simpleFilters = [
 	{ key: 'emboss', label: 'imagemap.filter.emboss', index: 13, text: 'E' },
 ];
 
-const toggleRows = [simpleFilters.slice(0, 4), simpleFilters.slice(4, 8), simpleFilters.slice(8, 10)];
+const FilterToggle = ({ definition, form, filters }: { definition: FilterToggleDefinition; form: any; filters: any[] }) => (
+	<div className="rde-image-filter-toggle">
+		<span className="rde-image-filter-toggle-label" title={i18next.t(definition.label)}>
+			{i18next.t(definition.label)}
+		</span>
+		<Form.Item
+			noStyle
+			name={['filters', definition.key]}
+			initialValue={!!filters[definition.index]}
+			valuePropName="checked"
+		>
+			<Tag.CheckableTag checked={false} className="rde-action-tag rde-image-filter-toggle-tag">
+				{definition.text}
+			</Tag.CheckableTag>
+		</Form.Item>
+	</div>
+);
+
+const FilterRange = ({
+	label,
+	enabled,
+	name,
+	initialValue,
+	min,
+	max,
+	step,
+	}: {
+	label: string;
+	enabled: boolean;
+	name: string[];
+	initialValue: number;
+	min: number;
+	max: number;
+	step: number;
+}) => (
+	<div className="rde-image-filter-range">
+		<div className="rde-image-filter-range-label" title={label}>{label}</div>
+		<Form.Item noStyle name={name} initialValue={initialValue}>
+			<Slider disabled={!enabled} step={step} min={min} max={max} />
+		</Form.Item>
+	</div>
+);
 
 export default {
 	render(_canvasRef: unknown, form: any, data: ImageFilterData) {
@@ -32,248 +80,72 @@ export default {
 		const noiseEnabled = Form.useWatch(['filters', 'noise', 'enabled'], form) ?? !!filters[8];
 		const pixelateEnabled = Form.useWatch(['filters', 'pixelate', 'enabled'], form) ?? !!filters[10];
 		const blurEnabled = Form.useWatch(['filters', 'blur', 'enabled'], form) ?? !!filters[11];
+		const filterLabel = (key: string) => i18next.t(key);
+		const adjustableFilters = [
+			{ key: 'brightness', enabled: brightnessEnabled, index: 5, field: 'brightness', fallback: 0.1, min: -1, max: 1, step: 0.01 },
+			{ key: 'contrast', enabled: contrastEnabled, index: 6, field: 'contrast', fallback: 0, min: -1, max: 1, step: 0.01 },
+			{ key: 'saturation', enabled: saturationEnabled, index: 7, field: 'saturation', fallback: 0, min: -1, max: 1, step: 0.01 },
+			{ key: 'hue', enabled: hueEnabled, index: 21, field: 'rotation', fallback: 0, min: -2, max: 2, step: 0.002 },
+			{ key: 'noise', enabled: noiseEnabled, index: 8, field: 'noise', fallback: 100, min: 0, max: 1000, step: 1 },
+			{ key: 'pixelate', enabled: pixelateEnabled, index: 10, field: 'blocksize', fallback: 4, min: 2, max: 20, step: 1 },
+			{ key: 'blur', enabled: blurEnabled, index: 11, field: 'value', fallback: 0.1, min: 0, max: 1, step: 0.01 },
+		];
 
 		return (
-			<Row>
-				{toggleRows.map((row, rowIndex) => (
-					<Row key={`row-${rowIndex}`}>
-						{row.map(filter => (
-							<Col md={24} lg={6} key={filter.key}>
-								<Form.Item label={i18next.t(filter.label)}>
-									<Form.Item
-										noStyle
-										name={['filters', filter.key]}
-										initialValue={!!filters[filter.index]}
-										valuePropName="checked"
-									>
-										<Tag.CheckableTag checked={false} className="rde-action-tag">
-											{filter.text}
-										</Tag.CheckableTag>
-									</Form.Item>
+			<div className="rde-image-filter-panel">
+				<div className="rde-image-filter-section-title">滤镜</div>
+				<div className="rde-image-filter-toggle-grid">
+					{simpleFilters.map(definition => (
+						<FilterToggle key={definition.key} definition={definition} form={form} filters={filters} />
+					))}
+				</div>
+
+				<div className="rde-image-filter-range-group">
+					<div className="rde-image-filter-range-heading">
+						<span>{filterLabel('imagemap.filter.gamma')}</span>
+						<Form.Item
+							noStyle
+							name={['filters', 'gamma', 'enabled']}
+							initialValue={!!filters[17]}
+							valuePropName="checked"
+						>
+			<Tag.CheckableTag checked={false} className="rde-action-tag rde-image-filter-toggle-tag">G</Tag.CheckableTag>
+						</Form.Item>
+					</div>
+					<div className="rde-image-filter-channel-grid">
+						<FilterRange label={filterLabel('color.red')} enabled={gammaEnabled} name={['filters', 'gamma', 'r']} initialValue={filters[17]?.gamma?.[0] ?? 1} min={0.01} max={2.2} step={0.01} />
+						<FilterRange label={filterLabel('color.green')} enabled={gammaEnabled} name={['filters', 'gamma', 'g']} initialValue={filters[17]?.gamma?.[1] ?? 1} min={0.01} max={2.2} step={0.01} />
+						<FilterRange label={filterLabel('color.blue')} enabled={gammaEnabled} name={['filters', 'gamma', 'b']} initialValue={filters[17]?.gamma?.[2] ?? 1} min={0.01} max={2.2} step={0.01} />
+					</div>
+				</div>
+
+				<div className="rde-image-filter-range-list">
+					{adjustableFilters.map(item => (
+						<div className="rde-image-filter-range-row" key={item.key}>
+							<div className="rde-image-filter-range-heading">
+								<span title={filterLabel(`imagemap.filter.${item.key}`)}>{filterLabel(`imagemap.filter.${item.key}`)}</span>
+								<Form.Item
+									noStyle
+									name={['filters', item.key, 'enabled']}
+									initialValue={!!filters[item.index]}
+									valuePropName="checked"
+								>
+									<Tag.CheckableTag checked={false} className="rde-action-tag rde-image-filter-toggle-tag">{item.key.slice(0, 1).toUpperCase()}</Tag.CheckableTag>
 								</Form.Item>
-							</Col>
-						))}
-					</Row>
-				))}
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.gamma')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'gamma', 'enabled']}
-								initialValue={!!filters[17]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									G
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={6}>
-						<Form.Item
-							label={i18next.t('color.red')}
-							name={['filters', 'gamma', 'r']}
-							initialValue={filters[17] ? filters[17].gamma[0] : 1}
-						>
-							<Slider disabled={!gammaEnabled} step={0.01} min={0.01} max={2.2} />
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={6}>
-						<Form.Item
-							label={i18next.t('color.green')}
-							name={['filters', 'gamma', 'g']}
-							initialValue={filters[17] ? filters[17].gamma[1] : 1}
-						>
-							<Slider disabled={!gammaEnabled} step={0.01} min={0.01} max={2.2} />
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={6}>
-						<Form.Item
-							label={i18next.t('color.blue')}
-							name={['filters', 'gamma', 'b']}
-							initialValue={filters[17] ? filters[17].gamma[2] : 1}
-						>
-							<Slider disabled={!gammaEnabled} step={0.01} min={0.01} max={2.2} />
-						</Form.Item>
-					</Col>
-				</Row>
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.brightness')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'brightness', 'enabled']}
-								initialValue={!!filters[5]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									B
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={18}>
-						<Form.Item
-							label={i18next.t('imagemap.filter.brightness')}
-							name={['filters', 'brightness', 'brightness']}
-							initialValue={filters[5] ? filters[5].brightness : 0.1}
-						>
-							<Slider disabled={!brightnessEnabled} step={0.01} min={-1} max={1} />
-						</Form.Item>
-					</Col>
-				</Row>
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.contrast')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'contrast', 'enabled']}
-								initialValue={!!filters[6]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									C
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={18}>
-						<Form.Item
-							label={i18next.t('imagemap.filter.contrast')}
-							name={['filters', 'contrast', 'contrast']}
-							initialValue={filters[6] ? filters[6].contrast : 0}
-						>
-							<Slider disabled={!contrastEnabled} step={0.01} min={-1} max={1} />
-						</Form.Item>
-					</Col>
-				</Row>
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.saturation')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'saturation', 'enabled']}
-								initialValue={!!filters[7]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									S
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={18}>
-						<Form.Item
-							label={i18next.t('imagemap.filter.saturation')}
-							name={['filters', 'saturation', 'saturation']}
-							initialValue={filters[7] ? filters[7].saturation : 0}
-						>
-							<Slider disabled={!saturationEnabled} step={0.01} min={-1} max={1} />
-						</Form.Item>
-					</Col>
-				</Row>
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.hue')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'hue', 'enabled']}
-								initialValue={!!filters[21]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									H
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={18}>
-						<Form.Item
-							label={i18next.t('imagemap.filter.hue')}
-							name={['filters', 'hue', 'rotation']}
-							initialValue={filters[21] ? filters[21].rotation : 0}
-						>
-							<Slider disabled={!hueEnabled} step={0.002} min={-2} max={2} />
-						</Form.Item>
-					</Col>
-				</Row>
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.noise')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'noise', 'enabled']}
-								initialValue={!!filters[8]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									N
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={18}>
-						<Form.Item
-							label={i18next.t('imagemap.filter.noise')}
-							name={['filters', 'noise', 'noise']}
-							initialValue={filters[8] ? filters[8].noise : 100}
-						>
-							<Slider disabled={!noiseEnabled} step={1} min={0} max={1000} />
-						</Form.Item>
-					</Col>
-				</Row>
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.pixelate')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'pixelate', 'enabled']}
-								initialValue={!!filters[10]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									P
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={18}>
-						<Form.Item
-							label={i18next.t('imagemap.filter.pixelate')}
-							name={['filters', 'pixelate', 'blocksize']}
-							initialValue={filters[10] ? filters[10].blocksize : 4}
-						>
-							<Slider disabled={!pixelateEnabled} step={1} min={2} max={20} />
-						</Form.Item>
-					</Col>
-				</Row>
-				<Row>
-					<Col md={24} lg={6}>
-						<Form.Item label={i18next.t('imagemap.filter.blur')}>
-							<Form.Item
-								noStyle
-								name={['filters', 'blur', 'enabled']}
-								initialValue={!!filters[11]}
-								valuePropName="checked"
-							>
-								<Tag.CheckableTag checked={false} className="rde-action-tag">
-									B
-								</Tag.CheckableTag>
-							</Form.Item>
-						</Form.Item>
-					</Col>
-					<Col md={24} lg={18}>
-						<Form.Item
-							label={i18next.t('imagemap.filter.blur')}
-							name={['filters', 'blur', 'value']}
-							initialValue={filters[11] ? filters[11].value : 0.1}
-						>
-							<Slider disabled={!blurEnabled} step={0.01} min={0} max={1} />
-						</Form.Item>
-					</Col>
-				</Row>
-			</Row>
+							</div>
+							<FilterRange
+								label=""
+								enabled={item.enabled}
+								name={['filters', item.key, item.field]}
+								initialValue={filters[item.index]?.[item.field] ?? item.fallback}
+								min={item.min}
+								max={item.max}
+								step={item.step}
+							/>
+						</div>
+					))}
+				</div>
+			</div>
 		);
 	},
 };

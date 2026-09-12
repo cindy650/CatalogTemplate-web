@@ -21,6 +21,7 @@ import Scrollbar from '../../../components/common/Scrollbar';
 import { INSPECTOR_FORM_PROPS } from '../../../components/editor';
 import {
 	convertImageMapSizeSchemeUnit,
+	resolveImageMapSpinePageRule,
 	resolveImageMapSpineWidth,
 	type ImageMapSizeSchemeValue,
 } from '../ImageMapSizeScheme';
@@ -31,6 +32,7 @@ interface PageCountOptionsEditorProps {
 	selected?: number;
 	onChange?: (value: number[]) => void;
 	onSelect: (value: number) => void;
+	allowEdit?: boolean;
 }
 
 const PageCountOptionsEditor = ({
@@ -38,6 +40,7 @@ const PageCountOptionsEditor = ({
 	selected,
 	onChange,
 	onSelect,
+	allowEdit = false,
 }: PageCountOptionsEditorProps) => {
 	const [adding, setAdding] = React.useState(false);
 	const [draft, setDraft] = React.useState<number | null>(null);
@@ -70,7 +73,7 @@ const PageCountOptionsEditor = ({
 					>
 						{pageCount}
 					</Button>
-					<Tooltip title={options.length <= 1 ? '至少保留一个页数选项' : `删除 ${pageCount} 页`}>
+					{allowEdit ? <Tooltip title={options.length <= 1 ? '至少保留一个页数选项' : `删除 ${pageCount} 页`}>
 						<Button
 							type="text"
 							danger
@@ -86,10 +89,10 @@ const PageCountOptionsEditor = ({
 								}
 							}}
 						/>
-					</Tooltip>
+					</Tooltip> : null}
 				</div>
 			))}
-			{adding ? (
+			{allowEdit && adding ? (
 				<InputNumber
 					autoFocus
 					className="rde-page-count-input"
@@ -103,7 +106,7 @@ const PageCountOptionsEditor = ({
 					onPressEnter={commit}
 					onBlur={commit}
 				/>
-			) : (
+			) : allowEdit ? (
 				<Button
 					type="dashed"
 					size="small"
@@ -113,7 +116,7 @@ const PageCountOptionsEditor = ({
 				>
 					添加页数
 				</Button>
-			)}
+			) : null}
 		</div>
 	);
 };
@@ -127,7 +130,13 @@ interface MapPropertiesProps {
 	onAddSizeScheme: () => void;
 	onDeleteSizeScheme: (id: string) => void;
 	onSaveSizeScheme: (values: Omit<ImageMapSizeSchemeValue, 'id'>) => void;
+	onRegisterSaveSizeScheme?: (handler: () => void) => void;
+	hideSizeSchemeSaveButton?: boolean;
 	onSelectSizeScheme: (id: string) => void;
+	simplified?: boolean;
+	hideCanvasSection?: boolean;
+	fontLayoutTrigger?: React.ReactNode;
+	fontLayoutSelection?: React.ReactNode;
 }
 
 const MapProperties = ({
@@ -139,7 +148,13 @@ const MapProperties = ({
 	onAddSizeScheme,
 	onDeleteSizeScheme,
 	onSaveSizeScheme,
+	onRegisterSaveSizeScheme,
+	hideSizeSchemeSaveButton,
 	onSelectSizeScheme,
+	simplified = false,
+	hideCanvasSection = true,
+	fontLayoutTrigger,
+	fontLayoutSelection,
 }: MapPropertiesProps) => {
 	const [form] = Form.useForm();
 	const workarea = canvasRef?.handler?.workarea;
@@ -149,16 +164,99 @@ const MapProperties = ({
 	const selectedUnit = Form.useWatch('unit', form) as ImageMapSizeSchemeValue['unit'] | undefined;
 	const selectedSpineWidthFormula = Form.useWatch('spineWidthFormula', form);
 	const hasSpineWidthFormula = Boolean(activeSizeScheme?.spineWidthFormula);
-	const usesSpineWidthFormula = selectedSpineWidthMode === 'by_page_count' && hasSpineWidthFormula && Boolean(selectedSpineWidthFormula);
+	const activeSpineWidthBasis = activeSizeScheme?.spineWidthBasis
+		?? (hasSpineWidthFormula ? 'formula' : selectedSpineWidthMode === 'by_page_count' ? 'page_count_table' : 'range');
+	const usesSpineWidthFormula = activeSpineWidthBasis === 'formula' && hasSpineWidthFormula && Boolean(selectedSpineWidthFormula);
+	const usesSpineWidthPageTable = activeSpineWidthBasis === 'page_count_table';
 	const usesSeparateBleed = activeSizeScheme?.separateBleed === true;
 	const unitRef = React.useRef(activeSizeScheme?.unit ?? 'in');
-	const calculatedSpineWidth = resolveImageMapSpineWidth({
+	const selectedCanvasUnit = selectedUnit ?? activeSizeScheme?.unit ?? 'in';
+	const pageRule = usesSpineWidthPageTable
+		? resolveImageMapSpinePageRule(
+			activeSizeScheme?.spineWidthPageRules,
+			Number(selectedPageCount ?? activeSizeScheme?.pageCount),
+			selectedCanvasUnit,
+		)
+		: undefined;
+	const calculatedSpineWidth = usesSpineWidthPageTable && pageRule
+		? pageRule.spineWidth
+		: resolveImageMapSpineWidth({
 		...form.getFieldsValue(true),
 		pageCount: selectedPageCount,
-		unit: selectedUnit ?? activeSizeScheme?.unit ?? 'in',
+		unit: selectedCanvasUnit,
 		spineWidthMode: selectedSpineWidthMode,
 		spineWidthFormula: selectedSpineWidthFormula,
-	});
+		});
+	const calculatedSpineBleed = usesSpineWidthPageTable && pageRule
+		? pageRule.spineBleed
+		: usesSpineWidthFormula && activeSizeScheme?.spineWidthFormula
+			? (() => {
+				const inches: Record<ImageMapSizeSchemeValue['unit'], number> = { in: 1, cm: 1 / 2.54, mm: 1 / 25.4 };
+				const formula = activeSizeScheme.spineWidthFormula;
+				return Number((Number(formula.spineBleed || 0) * inches[formula.unit] / inches[selectedCanvasUnit]).toFixed(4));
+			})()
+			: Number(form.getFieldValue('spineBleed') ?? activeSizeScheme?.spineBleed ?? 0);
+
+	const saveSizeScheme = React.useCallback(() => {
+		void form.validateFields([
+			'sizeSchemeLabel',
+			'pageCountOptions',
+			'pageCount',
+			'unit',
+			'sideWidth',
+			'sideHeight',
+			...(usesSeparateBleed ? ['horizontalBleed', 'verticalBleed'] : ['bleed']),
+			'spineWidthMode',
+			'spineWidth',
+			...(usesSpineWidthFormula ? [
+				['spineWidthFormula', 'unit'],
+				['spineWidthFormula', 'pageCountCoefficient'],
+				['spineWidthFormula', 'pageCountThickness'],
+				['spineWidthFormula', 'baseWidth'],
+				['spineWidthFormula', 'additionalWidth'],
+			] : usesSpineWidthPageTable ? [] : ['spineBleed', 'minSpineWidth', 'maxSpineWidth']),
+			'backCoverSafeDistance',
+			'coverSafeDistance',
+			'spineSafeDistance',
+		]).then(values => {
+			const allValues = form.getFieldsValue(true);
+			onSaveSizeScheme({
+				label: values.sizeSchemeLabel.trim(),
+				unit: allValues.unit,
+				pageCount: allValues.pageCount,
+				pageCountOptions: allValues.pageCountOptions,
+				sideWidth: allValues.sideWidth,
+				sideHeight: allValues.sideHeight,
+				bleed: usesSeparateBleed ? allValues.horizontalBleed ?? 0 : allValues.bleed ?? 0,
+				separateBleed: usesSeparateBleed,
+				horizontalBleed: usesSeparateBleed ? allValues.horizontalBleed ?? 0 : allValues.bleed ?? 0,
+				verticalBleed: usesSeparateBleed ? allValues.verticalBleed ?? 0 : allValues.bleed ?? 0,
+				spineWidthMode: allValues.spineWidthMode ?? 'fixed',
+				spineWidthBasis: activeSpineWidthBasis,
+				...(activeSizeScheme?.spineWidthPageRules ? { spineWidthPageRules: activeSizeScheme.spineWidthPageRules } : {}),
+				spineWidth: usesSpineWidthFormula || usesSpineWidthPageTable ? calculatedSpineWidth : allValues.spineWidth ?? 0,
+				minSpineWidth: usesSpineWidthFormula || usesSpineWidthPageTable ? 0 : allValues.minSpineWidth ?? 0,
+				maxSpineWidth: usesSpineWidthFormula || usesSpineWidthPageTable ? 0 : allValues.maxSpineWidth ?? 0,
+				spineBleed: usesSpineWidthFormula || usesSpineWidthPageTable ? calculatedSpineBleed : allValues.spineBleed ?? 0,
+				...(usesSpineWidthFormula ? { spineWidthFormula: {
+					unit: allValues.spineWidthFormula?.unit ?? 'cm',
+					pageCountCoefficient: Number(allValues.spineWidthFormula?.pageCountCoefficient) || 0,
+					pageCountThickness: Number(allValues.spineWidthFormula?.pageCountThickness) || 0,
+					baseWidth: Number(allValues.spineWidthFormula?.baseWidth) || 0,
+					additionalWidth: Number(allValues.spineWidthFormula?.additionalWidth) || 0,
+					spineBleed: calculatedSpineBleed,
+				} } : {}),
+				backCoverSafeDistance: allValues.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+				coverSafeDistance: allValues.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+				spineSafeDistance: allValues.spineSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
+				paperThickness: usesSpineWidthFormula || usesSpineWidthPageTable ? 0 : allValues.paperThickness ?? 0,
+			});
+		});
+	}, [activeSpineWidthBasis, calculatedSpineBleed, calculatedSpineWidth, form, onSaveSizeScheme, usesSeparateBleed, usesSpineWidthFormula, usesSpineWidthPageTable]);
+
+	React.useEffect(() => {
+		onRegisterSaveSizeScheme?.(saveSizeScheme);
+	}, [onRegisterSaveSizeScheme, saveSizeScheme]);
 
 	const workareaValues = React.useCallback((values: Record<string, any>) => {
 		const printValues: Record<string, any> = {
@@ -166,10 +264,27 @@ const MapProperties = ({
 			separateBleed: usesSeparateBleed,
 			bleed: usesSeparateBleed ? values.horizontalBleed : values.bleed,
 			spineWidthMode: values.spineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed',
+			// Keep the product strategy available to the final resolver. Without
+			// this metadata a page-table value can be recalculated by a product
+			// formula that happens to be present on the same product.
+			spineWidthBasis: activeSpineWidthBasis,
+			...(activeSizeScheme?.spineWidthPageRules ? { spineWidthPageRules: activeSizeScheme.spineWidthPageRules } : {}),
 			...(hasSpineWidthFormula && (values.spineWidthFormula ?? activeSizeScheme?.spineWidthFormula)
 				? { spineWidthFormula: values.spineWidthFormula ?? activeSizeScheme?.spineWidthFormula }
 				: {}),
 		};
+		if (usesSpineWidthPageTable && activeSizeScheme?.spineWidthPageRules) {
+			const targetUnit: ImageMapSizeSchemeValue['unit'] = values.unit === 'cm' || values.unit === 'mm' ? values.unit : 'in';
+			const rule = resolveImageMapSpinePageRule(
+				activeSizeScheme.spineWidthPageRules,
+				Number(values.pageCount ?? activeSizeScheme.pageCount),
+				targetUnit,
+			);
+			if (rule) {
+				printValues.spineWidth = rule.spineWidth;
+				printValues.spineBleed = rule.spineBleed;
+			}
+		}
 		delete printValues.backCoverSafeDistance;
 		delete printValues.coverSafeDistance;
 		delete printValues.spineSafeDistance;
@@ -177,7 +292,7 @@ const MapProperties = ({
 			...printValues,
 			spineWidth: resolveImageMapSpineWidth(printValues),
 		};
-	}, [activeSizeScheme?.spineWidthFormula, activeSizeScheme?.spineWidthMode, hasSpineWidthFormula, usesSeparateBleed]);
+	}, [activeSizeScheme?.pageCount, activeSizeScheme?.spineWidthFormula, activeSizeScheme?.spineWidthMode, activeSizeScheme?.spineWidthPageRules, activeSpineWidthBasis, hasSpineWidthFormula, usesSeparateBleed, usesSpineWidthPageTable]);
 
 	const emitWorkareaChange = React.useCallback((
 		changedValues: Record<string, any>,
@@ -248,6 +363,65 @@ const MapProperties = ({
 		return null;
 	}
 
+	if (simplified) {
+		return (
+			<Scrollbar>
+				<Form
+					form={form}
+					{...INSPECTOR_FORM_PROPS}
+					onValuesChange={(changedValues, allValues) => {
+						if (Object.hasOwn(changedValues, 'unit')) {
+							const nextUnit = changedValues.unit as ImageMapSizeSchemeValue['unit'];
+							const convertedValues = convertImageMapSizeSchemeUnit(allValues, unitRef.current, nextUnit);
+							unitRef.current = nextUnit;
+							form.setFieldsValue(convertedValues);
+							emitWorkareaChange({ unit: nextUnit }, convertedValues);
+							return;
+						}
+						emitWorkareaChange(changedValues, allValues);
+					}}
+				>
+					<Collapse
+						bordered={false}
+						expandIconPosition="end"
+						defaultActiveKey={['image']}
+						items={[{
+							key: 'image',
+							label: PropertyDefinition.map.image.title,
+							children: PropertyDefinition.map.image.component.render(canvasRef, form, workarea),
+						}]}
+					/>
+					{fontLayoutTrigger}
+					{fontLayoutSelection}
+					<section className="rde-size-scheme-section is-simplified">
+						<div className="rde-size-scheme-heading"><strong>画布尺寸</strong><span>{activeSizeScheme?.label}</span></div>
+						<Form.Item label="单位" name="unit" className="rde-size-scheme-unit-field">
+							<Select
+								options={[
+									{ value: 'in', label: 'in' },
+									{ value: 'cm', label: 'cm' },
+									{ value: 'mm', label: 'mm' },
+								]}
+							/>
+						</Form.Item>
+						<Row gutter={8}>
+							<Col span={12}><Form.Item label="单面宽" name="sideWidth"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+							<Col span={12}><Form.Item label="单面高" name="sideHeight"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+						</Row>
+						{usesSeparateBleed ? <Row gutter={8}>
+							<Col span={12}><Form.Item label="左右出血" name="horizontalBleed"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+							<Col span={12}><Form.Item label="上下出血" name="verticalBleed"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+						</Row> : <Form.Item label="出血" name="bleed"><InputNumber style={{ width: '100%' }} /></Form.Item>}
+						<Row gutter={8}>
+							<Col span={12}><Form.Item label="背脊宽" name="spineWidth"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+							<Col span={12}><Form.Item label="背脊出血" name="spineBleed"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+						</Row>
+					</section>
+				</Form>
+			</Scrollbar>
+		);
+	}
+
 	return (
 		<Scrollbar>
 			<Form
@@ -283,13 +457,17 @@ const MapProperties = ({
 					bordered={false}
 					expandIconPosition="end"
 					defaultActiveKey={[]}
-					items={Object.keys(PropertyDefinition.map).map(key => ({
+					items={Object.keys(PropertyDefinition.map)
+						.filter(key => (!simplified || key === 'image') && (!hideCanvasSection || key !== 'map'))
+						.map(key => ({
 						key,
 						label: PropertyDefinition.map[key].title,
 						showArrow: true,
 						children: PropertyDefinition.map[key].component.render(canvasRef, form, workarea),
 					}))}
 				/>
+				{fontLayoutTrigger}
+				{fontLayoutSelection}
 				<section className="rde-size-scheme-section">
 					<Form.Item name="pageCount" hidden>
 						<InputNumber />
@@ -303,7 +481,7 @@ const MapProperties = ({
 							<Button type="text" size="small" icon={<PlusOutlined />} onClick={onAddSizeScheme}>
 								新增
 							</Button>
-							<Popconfirm
+							{!hideSizeSchemeSaveButton ? <Popconfirm
 								title="保存尺寸方案"
 								description="保存会同时保存当前选中规格模板的数据"
 								okText="确认保存"
@@ -376,7 +554,7 @@ const MapProperties = ({
 							>
 								保存
 							</Button>
-							</Popconfirm>
+							</Popconfirm> : null}
 						</Space>
 					</div>
 					<div className="rde-size-scheme-cards" role="listbox" aria-label="尺寸规格">
@@ -504,15 +682,17 @@ const MapProperties = ({
 							</Col>
 						)}
 						<Col span={usesSeparateBleed ? 24 : 12}>
-							<Form.Item label="背脊依据" name="spineWidthMode" rules={[{ required: true, message: '请选择背脊依据' }]}>
+							<Form.Item label="背脊依据">
 								<Segmented
 									block
 									size="small"
+									disabled
+									value={activeSpineWidthBasis}
 									options={[
-										{ value: 'fixed', label: '固定' },
-										{ value: 'by_page_count', label: '按页数' },
+										{ value: 'range', label: '固定范围' },
+										{ value: 'formula', label: '产品公式' },
+										{ value: 'page_count_table', label: '按页数分段' },
 									]}
-									onChange={() => {}}
 								/>
 							</Form.Item>
 						</Col>
@@ -529,7 +709,7 @@ const MapProperties = ({
 							<Row gutter={8}>
 								<Col span={8}><Form.Item label="基础宽度" name={['spineWidthFormula', 'baseWidth']} rules={[{ required: true, message: '请输入基础宽度' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
 								<Col span={8}><Form.Item label="附加宽度" name={['spineWidthFormula', 'additionalWidth']} rules={[{ required: true, message: '请输入附加宽度' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
-								<Col span={8}><Form.Item label="背脊出血" name={['spineWidthFormula', 'spineBleed']}><InputNumber value={0} disabled style={{ width: '100%' }} /></Form.Item></Col>
+								<Col span={8}><Form.Item label="背脊出血"><InputNumber value={calculatedSpineBleed} addonAfter={selectedCanvasUnit} disabled style={{ width: '100%' }} /></Form.Item></Col>
 							</Row>
 							<Row gutter={8}>
 								<Col span={8}>
@@ -540,8 +720,22 @@ const MapProperties = ({
 							</Row>
 						</div>
 					) : null}
-					<Row gutter={8}>
-						<Col span={12} style={usesSpineWidthFormula ? { display: 'none' } : undefined}>
+					{usesSpineWidthPageTable ? (
+						<Row gutter={8}>
+							<Col span={12}>
+								<Form.Item label="背脊宽">
+									<InputNumber value={calculatedSpineWidth} precision={4} disabled style={{ width: '100%' }} />
+								</Form.Item>
+							</Col>
+							<Col span={12}>
+								<Form.Item label="背脊出血">
+									<InputNumber value={calculatedSpineBleed} addonAfter={selectedCanvasUnit} precision={4} disabled style={{ width: '100%' }} />
+								</Form.Item>
+							</Col>
+						</Row>
+					) : null}
+					<Row gutter={8} style={usesSpineWidthFormula || usesSpineWidthPageTable ? { display: 'none' } : undefined}>
+						<Col span={12}>
 							<Form.Item
 									label="背脊宽"
 								name="spineWidth"
@@ -550,13 +744,13 @@ const MapProperties = ({
 								<InputNumber min={0} precision={4} style={{ width: '100%' }} />
 							</Form.Item>
 						</Col>
-							<Col span={12} style={usesSpineWidthFormula ? { display: 'none' } : undefined}>
+						<Col span={12}>
 							<Form.Item label="背脊出血" name="spineBleed" rules={[{ required: true, message: '请输入背脊出血' }]}>
 								<InputNumber min={0} precision={4} style={{ width: '100%' }} />
 							</Form.Item>
 						</Col>
 					</Row>
-					<Row gutter={8} style={usesSpineWidthFormula ? { display: 'none' } : undefined}>
+					<Row gutter={8} style={usesSpineWidthFormula || usesSpineWidthPageTable ? { display: 'none' } : undefined}>
 						<Col span={12}>
 							<Form.Item label="最小背脊宽" name="minSpineWidth" rules={[{ required: true, message: '请输入最小背脊宽' }]}>
 								<InputNumber min={0} precision={4} style={{ width: '100%' }} />
@@ -580,13 +774,6 @@ const MapProperties = ({
 							</Form.Item>
 						</Col>
 									</Row>
-						<Row gutter={8} style={usesSpineWidthFormula ? { display: 'none' } : undefined}>
-											<Col span={24}>
-													<Form.Item label="纸张厚度" name="paperThickness" rules={[{ required: true, message: '请输入纸张厚度' }]}>
-											<InputNumber min={0} precision={4} addonAfter="mm" style={{ width: '100%' }} />
-											</Form.Item>
-										</Col>
-									</Row>
 									<Row gutter={8}>
 										<Col span={24}>
 											<Form.Item
@@ -601,10 +788,10 @@ const MapProperties = ({
 													},
 												]}
 											>
-												<PageCountOptionsEditor selected={selectedPageCount} onSelect={selectPageCount} />
+								<PageCountOptionsEditor selected={selectedPageCount} onSelect={selectPageCount} />
 											</Form.Item>
 										</Col>
-									</Row>
+								</Row>
 								</section>
 			</Form>
 		</Scrollbar>

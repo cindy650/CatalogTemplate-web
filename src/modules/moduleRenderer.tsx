@@ -9,12 +9,14 @@ import type {
 } from '@shared/domain';
 import AccountPage from './account';
 import ImageMapEditorTestPage from './imageMapEditorTest/ImageMapEditorTestPage';
+import UIPrototypePage from './uiPrototype/UIPrototypePage';
 import ExportsPage from './exports';
 import OrdersPage from './orders';
 import OrderTemplateEditorPage from './orders/OrderTemplateEditorPage';
 import ShopsPage from './shops';
 import SizeTemplatesPage from './sizeTemplates';
 import FontsPage from './fonts/FontsPage';
+import FontLayoutsPage from './fontLayouts';
 import TemplateLibraryPage from './templates/TemplateLibraryPage';
 import InnerPagesPage from './innerPages/InnerPagesPage';
 import TextGenerationRulesPage from './textGenerationRules/TextGenerationRulesPage';
@@ -53,6 +55,8 @@ type ModuleRenderContext = {
   selectedSizeTemplateId?: number;
   selectedInnerPagesShopId?: number;
   selectedInnerPagesProductId?: number;
+  selectedFontLayoutsShopId?: number;
+  selectedFontLayoutsProductId?: number;
   products: ProductCategory[];
   selectedTemplateLibraryProductId?: number;
   selectedTemplateLibraryShopId: TemplateLibraryShopSelection;
@@ -93,6 +97,7 @@ export function renderActiveModule(activeModule: ModuleId, context: ModuleRender
           shops={context.shops}
           products={context.products}
           saveTemplate={context.saveOrderTemplate}
+          reloadOrders={context.reloadOrders}
           onExit={context.closeOrderTemplateEditor}
         />
       );
@@ -117,11 +122,26 @@ export function renderActiveModule(activeModule: ModuleId, context: ModuleRender
   }
 
   if (activeModule === 'image-map-test') {
-    return <ImageMapEditorTestPage shops={context.shops} initialProductId={context.selectedTemplateLibraryProductId} />;
+    return <ImageMapEditorTestPage shops={context.shops} initialProductId={context.selectedTemplateLibraryProductId} fontLayoutManagementEnabled />;
+  }
+
+  if (activeModule === 'ui-prototype') {
+    return <UIPrototypePage />;
   }
 
   if (activeModule === 'fonts') {
     return <FontsPage />;
+  }
+
+  if (activeModule === 'font-layouts') {
+    return (
+      <FontLayoutsPage
+        shops={context.shops}
+        products={context.products}
+        selectedShopId={context.selectedFontLayoutsShopId}
+        selectedProductId={context.selectedFontLayoutsProductId}
+      />
+    );
   }
 
   if (activeModule === 'template-library') {

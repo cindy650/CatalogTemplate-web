@@ -23,13 +23,17 @@ interface ImageMapBasicInfoProps {
 	previewImage?: string;
 	saving?: boolean;
 	onSave?: (previewFile?: File) => void | boolean | Promise<void | boolean>;
+	uploadPreviewImage?: (file: File) => Promise<string>;
+	onPreviewImageChange?: (url: string) => void;
+	entityLabel?: string;
 }
 
-const ImageMapBasicInfo = ({ shops, value, onChange, previewImage, saving, onSave }: ImageMapBasicInfoProps) => {
+const ImageMapBasicInfo = ({ shops, value, onChange, previewImage, saving, onSave, uploadPreviewImage, onPreviewImageChange, entityLabel = '模板' }: ImageMapBasicInfoProps) => {
 	const [form] = Form.useForm<ImageMapBasicInfoValue>();
 	const [previewFile, setPreviewFile] = useState<File>();
 	const [previewUrl, setPreviewUrl] = useState('');
 	const [uploadError, setUploadError] = useState('');
+	const [uploadingPreview, setUploadingPreview] = useState(false);
 
 	useEffect(() => {
 		form.setFieldsValue(value);
@@ -47,7 +51,7 @@ const ImageMapBasicInfo = ({ shops, value, onChange, previewImage, saving, onSav
 
 	return (
 		<section className="rde-imagemap-basic-info">
-			<EditorPanelHeader eyebrow="模板" title="基本信息" />
+		<EditorPanelHeader eyebrow={entityLabel} title="基本信息" />
 			<div className="rde-imagemap-basic-info-content">
 				<Form
 					form={form}
@@ -74,7 +78,7 @@ const ImageMapBasicInfo = ({ shops, value, onChange, previewImage, saving, onSav
 							/>
 						</Form.Item>
 						<Form.Item
-							label="模板名称"
+							label={`${entityLabel}名称`}
 							name="templateName"
 							rules={[
 								{ required: true, message: '请输入模板名称' },
@@ -84,7 +88,7 @@ const ImageMapBasicInfo = ({ shops, value, onChange, previewImage, saving, onSav
 							<Input placeholder="例如：婚礼签到册" />
 						</Form.Item>
 					</div>
-					{onSave ? (
+					{onSave || uploadPreviewImage ? (
 						<div className="rde-imagemap-template-save-panel">
 							<div className="rde-imagemap-template-preview">
 								{previewUrl ? <Image src={previewUrl} alt="模板预览图" preview={{ src: previewUrl }} /> : <PictureOutlined />}
@@ -104,28 +108,41 @@ const ImageMapBasicInfo = ({ shops, value, onChange, previewImage, saving, onSav
 										}
 										setUploadError('');
 										setPreviewFile(file);
+										if (uploadPreviewImage) {
+											setUploadingPreview(true);
+											void uploadPreviewImage(file).then((url) => {
+												if (!url) throw new Error('预览图上传成功，但接口未返回 OSS 地址。');
+												setPreviewUrl(url);
+												setPreviewFile(undefined);
+												onPreviewImageChange?.(url);
+											}).catch((error) => {
+												setUploadError(error instanceof Error ? error.message : String(error));
+											}).finally(() => setUploadingPreview(false));
+										}
 										return false;
 									}}
 									maxCount={1}
+									disabled={uploadingPreview}
 									showUploadList={false}
 								>
 									<InboxOutlined />
 									<span>{previewFile ? previewFile.name : '点击或拖拽上传预览图'}</span>
 									<small>支持 PNG、JPG、JPEG、WEBP，最大 10MB</small>
 								</Upload.Dragger>
-								<Button
+								{onSave ? <Button
 									type="primary"
 									icon={<SaveOutlined />}
-									loading={saving}
+									loading={saving || uploadingPreview}
 									onClick={() => {
 										void form.validateFields().then(async () => {
-											const saved = await onSave(previewFile);
+												const saved = await onSave(previewFile);
 											if (saved !== false) setPreviewFile(undefined);
 										});
 									}}
 								>
-									保存模板
+									保存{entityLabel}
 								</Button>
+								: null}
 							</div>
 							{uploadError ? <div className="rde-imagemap-template-upload-error">{uploadError}</div> : null}
 						</div>

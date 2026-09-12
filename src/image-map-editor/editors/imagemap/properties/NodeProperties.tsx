@@ -18,6 +18,7 @@ interface NodePropertiesProps {
 	onFontSelect?: (font: { family: string; filePath: string; aliases?: string[] }) => void | Promise<void | boolean>;
 	onCenterHorizontally?: () => void;
 	onCenterVertically?: () => void;
+	onTextTransform?: (mode: 'capitalize' | 'uppercase') => void;
 	textGenerationRules?: ImageMapTextGenerationRule[];
 	textGenerationRulesLoading?: boolean;
 	selectedItem?: any;
@@ -32,9 +33,19 @@ const NodePropertiesForm = (props: NodePropertiesProps) => {
 	const propertyType = selectedItem?.superType === 'text'
 		? 'textbox'
 		: Object.keys(PropertyDefinition).find(key => key.toLowerCase() === rawType.toLowerCase()) || rawType;
-	const propertySections = selectedItem && PropertyDefinition[propertyType]
+	const allPropertySections = selectedItem && PropertyDefinition[propertyType]
 		? Object.entries(PropertyDefinition[propertyType])
 		: [];
+	const textSectionOrder = ['text', 'style', 'general'];
+	const propertySections = propertyType === 'textbox'
+		? [...allPropertySections].sort(([a], [b]) => {
+			const rank = (key: string) => {
+				const index = textSectionOrder.indexOf(key);
+				return index === -1 ? 999 : index;
+			};
+			return rank(a) - rank(b);
+		})
+		: allPropertySections;
 	const workareaUnit = canvasRef?.handler?.workarea?.unit;
 	React.useEffect(() => {
 		const isShape = ['rect', 'triangle', 'circle', 'lines', 'dashedrect'].includes(String(selectedItem?.type || '').toLowerCase());
@@ -76,6 +87,7 @@ const NodePropertiesForm = (props: NodePropertiesProps) => {
 										onFontSelect: props.onFontSelect,
 										onCenterHorizontally: props.onCenterHorizontally,
 									onCenterVertically: props.onCenterVertically,
+									onTextTransform: props.onTextTransform,
 									textGenerationRules: props.textGenerationRules,
 									textGenerationRulesLoading: props.textGenerationRulesLoading,
 									onTextGenerationRuleSelect: (rule: ImageMapTextGenerationRule) => {

@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { App, Button, Empty, Input, Pagination, Popconfirm, Result, Select, Space, Table, Tag, Tooltip } from 'antd';
-import { CheckOutlined, EditOutlined, PrinterOutlined, ReloadOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
+import { App, Alert, Button, Card, Descriptions, Empty, Input, Modal, Pagination, Popconfirm, Result, Select, Space, Spin, Steps, Table, Tag, Tooltip } from 'antd';
+import { AppstoreOutlined, CheckOutlined, EditOutlined, FileTextOutlined, PrinterOutlined, ReloadOutlined, SearchOutlined, SendOutlined, ShopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import type { Order, OrderItem, OrderListFilters } from '@shared/domain';
+import type { CatalogSizeTemplate, Order, OrderItem, OrderListFilters, ProductCategory } from '@shared/domain';
 import { browserAlbumApi } from '../../api';
 import type { OrdersPageProps } from '../types';
 import { downloadExportFile } from './downloadExport';
@@ -35,7 +35,6 @@ function fixedColumnSizing(viewportWidth: number): OrderFixedColumnSizing {
   if (viewportWidth < 1280) return { status: 120, actions: 128 };
   return { status: 144, actions: 150 };
 }
-
 function useOrderFixedColumnSizing(): OrderFixedColumnSizing {
   const [sizing, setSizing] = useState<OrderFixedColumnSizing>(() => (
     fixedColumnSizing(typeof window === 'undefined' ? 1280 : window.innerWidth)
@@ -49,7 +48,6 @@ function useOrderFixedColumnSizing(): OrderFixedColumnSizing {
 
   return sizing;
 }
-
 function useOrderTableBodyHeight(measureKey: unknown) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [bodyHeight, setBodyHeight] = useState(240);
@@ -209,6 +207,20 @@ export default function OrdersPage({
   const [exportingOrderId, setExportingOrderId] = useState('');
   const [advancingOrderId, setAdvancingOrderId] = useState('');
   const [sendingPreviewOrderId, setSendingPreviewOrderId] = useState('');
+  const exportingOrderRef = useRef('');
+  const advancingOrderRef = useRef('');
+  const sendingPreviewOrderRef = useRef('');
+  const [editingSetupOrder, setEditingSetupOrder] = useState<Order>();
+  const [editingSetupStep, setEditingSetupStep] = useState(1);
+  const [setupProducts, setSetupProducts] = useState<ProductCategory[]>([]);
+  const [setupProductsLoading, setSetupProductsLoading] = useState(false);
+  const [setupProductId, setSetupProductId] = useState<number>();
+  const [setupTemplates, setSetupTemplates] = useState<CatalogSizeTemplate[]>([]);
+  const [setupTemplatesLoading, setSetupTemplatesLoading] = useState(false);
+  const [setupTemplateId, setSetupTemplateId] = useState<number>();
+  const [setupOptionId, setSetupOptionId] = useState<string>();
+  const [setupError, setSetupError] = useState('');
+  const [setupSubmitting, setSetupSubmitting] = useState(false);
   const [orderNumber, setOrderNumber] = useState(filters.orderNumber ?? '');
   const [shop, setShop] = useState<string | undefined>(filters.shop);
   const [status, setStatus] = useState<number | undefined>(filters.status);
@@ -216,6 +228,66 @@ export default function OrdersPage({
   const { cardRef: tableCardRef, bodyHeight: tableBodyHeight } = useOrderTableBodyHeight(orders);
   const rows = orderRows(orders);
   const textFields = textMarkedFields(orders);
+
+  const setupShopId = editingSetupOrder?.shopId;
+  const setupShop = setupShopId === undefined ? undefined : shops.find((item) => item.id === setupShopId);
+  const selectedSetupTemplate = setupTemplates.find((item) => item.id === setupTemplateId);
+  const selectedSetupOption = selectedSetupTemplate?.sizeOptions.find((item) => item.id === setupOptionId);
+  const orderActionBusy = Boolean(exportingOrderId || advancingOrderId || sendingPreviewOrderId);
+
+  useEffect(() => {
+    if (!editingSetupOrder) return;
+    setSetupProducts([]);
+    setSetupProductId(undefined);
+    setSetupTemplates([]);
+    setSetupTemplateId(undefined);
+    setSetupOptionId(undefined);
+    setSetupError('');
+    setEditingSetupStep(1);
+    if (setupShopId === undefined) {
+      setSetupError('订单缺少 shop_id，无法查询当前店铺的产品。');
+      return;
+    }
+    let cancelled = false;
+    setSetupProductsLoading(true);
+    void browserAlbumApi.products.list({ shopId: setupShopId, limit: 100, offset: 0 })
+      .then((items) => {
+        if (!cancelled) setSetupProducts(items);
+      })
+      .catch((error) => {
+        if (!cancelled) setSetupError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) setSetupProductsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [editingSetupOrder, setupShopId]);
+
+  useEffect(() => {
+    if (!editingSetupOrder || setupShopId === undefined || setupProductId === undefined) {
+      setSetupTemplates([]);
+      setSetupTemplateId(undefined);
+      setSetupOptionId(undefined);
+      return;
+    }
+    let cancelled = false;
+    setSetupTemplatesLoading(true);
+    setSetupError('');
+    void browserAlbumApi.catalogSizeTemplates.list({ shopId: setupShopId, productId: setupProductId, limit: 100, offset: 0 })
+      .then((items) => {
+        if (!cancelled) setSetupTemplates(items);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSetupTemplates([]);
+          setSetupError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSetupTemplatesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [editingSetupOrder, setupProductId, setupShopId]);
 
   useEffect(() => {
     setOrderNumber(filters.orderNumber ?? '');
@@ -275,6 +347,8 @@ export default function OrdersPage({
   }];
 
   async function confirmProduction(order: Order): Promise<void> {
+    if (exportingOrderRef.current || orderActionBusy) return;
+    exportingOrderRef.current = order.id;
     setExportingOrderId(order.id);
     let downloadStarted = false;
     try {
@@ -290,11 +364,34 @@ export default function OrdersPage({
         ? `订单 ${order.orderNo} 的 ZIP 已开始下载，但状态更新失败：${errorMessage}`
         : `订单 ${order.orderNo} 确认生产失败：${errorMessage}`);
     } finally {
-      setExportingOrderId('');
+      if (exportingOrderRef.current === order.id) {
+        exportingOrderRef.current = '';
+        setExportingOrderId('');
+      }
+    }
+  }
+
+  async function downloadProductionFile(order: Order): Promise<void> {
+    if (exportingOrderRef.current || orderActionBusy) return;
+    exportingOrderRef.current = order.id;
+    setExportingOrderId(order.id);
+    try {
+      const file = await browserAlbumApi.orders.exportTemplate(order);
+      downloadExportFile(file);
+      message.success(`订单 ${order.orderNo} 的生产文件 ZIP 已开始下载`);
+    } catch (error) {
+      message.error(`订单 ${order.orderNo} 下载生产文件失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (exportingOrderRef.current === order.id) {
+        exportingOrderRef.current = '';
+        setExportingOrderId('');
+      }
     }
   }
 
   async function sendPreviewImages(order: Order): Promise<void> {
+    if (sendingPreviewOrderRef.current || orderActionBusy) return;
+    sendingPreviewOrderRef.current = order.id;
     setSendingPreviewOrderId(order.id);
     try {
       await browserAlbumApi.orders.sendPreviewImages(order);
@@ -304,7 +401,10 @@ export default function OrdersPage({
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(`订单 ${order.orderNo} 发送示意图失败：${errorMessage}`);
     } finally {
-      setSendingPreviewOrderId('');
+      if (sendingPreviewOrderRef.current === order.id) {
+        sendingPreviewOrderRef.current = '';
+        setSendingPreviewOrderId('');
+      }
     }
   }
 
@@ -312,6 +412,8 @@ export default function OrdersPage({
     const actionText = orderActionText(order);
     if (!actionText) return;
 
+    if (advancingOrderRef.current || orderActionBusy) return;
+    advancingOrderRef.current = order.id;
     setAdvancingOrderId(order.id);
     try {
       await browserAlbumApi.orders.advanceStatus(order);
@@ -321,7 +423,10 @@ export default function OrdersPage({
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(`订单 ${order.orderNo} 状态更新失败：${errorMessage}`);
     } finally {
-      setAdvancingOrderId('');
+      if (advancingOrderRef.current === order.id) {
+        advancingOrderRef.current = '';
+        setAdvancingOrderId('');
+      }
     }
   }
 
@@ -341,6 +446,37 @@ export default function OrdersPage({
     setShop(undefined);
     setStatus(undefined);
     void reloadOrders({ limit: orderLimit, pages: 1 });
+  }
+
+  function openEditSetup(order: Order): void {
+    if (hasOrderTemplateJson(order)) {
+      openOrderInEditor(order);
+      return;
+    }
+    setEditingSetupOrder(order);
+  }
+
+  async function completeEditSetup(): Promise<void> {
+    if (!editingSetupOrder || !setupProductId || !setupTemplateId || !setupOptionId) return;
+    setSetupSubmitting(true);
+    setSetupError('');
+    try {
+      const associatedOrder = await browserAlbumApi.orders.associateTemplate(editingSetupOrder, {
+        productId: setupProductId,
+        sizeTemplateId: setupTemplateId,
+        sizeOptionId: setupOptionId
+      });
+      await reloadOrders();
+      message.success(`订单 ${editingSetupOrder.orderNo} 的产品、尺寸模板和规格关联成功`);
+      setEditingSetupOrder(undefined);
+      if (hasOrderTemplateJson(associatedOrder)) openOrderInEditor(associatedOrder);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setSetupError(errorMessage);
+      message.error(`订单 ${editingSetupOrder.orderNo} 模板关联失败：${errorMessage}`);
+    } finally {
+      setSetupSubmitting(false);
+    }
   }
 
   const columns: ColumnsType<OrderTableRow> = [
@@ -375,10 +511,23 @@ export default function OrdersPage({
             <Button
               block
               size="small"
+              icon={<EditOutlined />}
+              onClick={(event) => {
+                event.stopPropagation();
+                openEditSetup(order);
+              }}
+            >
+              开始编辑
+            </Button>
+          )}
+          {order.status === 0 && (
+            <Button
+              block
+              size="small"
               type="primary"
               icon={<SendOutlined />}
               loading={sendingPreviewOrderId === order.id}
-              disabled={Boolean(sendingPreviewOrderId) && sendingPreviewOrderId !== order.id}
+              disabled={orderActionBusy}
               onClick={(event) => {
                 event.stopPropagation();
                 void sendPreviewImages(order);
@@ -423,7 +572,7 @@ export default function OrdersPage({
                 type="primary"
                 icon={orderActionIcon(order.status)}
                 loading={advancingOrderId === order.id}
-                disabled={Boolean(advancingOrderId) && advancingOrderId !== order.id}
+                disabled={orderActionBusy}
                 onClick={(event) => event.stopPropagation()}
               >
                 {orderActionText(order)}
@@ -448,7 +597,7 @@ export default function OrdersPage({
                 type="primary"
                 icon={<PrinterOutlined />}
                 loading={exportingOrderId === order.id}
-                disabled={Boolean(exportingOrderId) && exportingOrderId !== order.id}
+                disabled={orderActionBusy}
                 onClick={(event) => event.stopPropagation()}
               >
                 {orderActionText(order)}
@@ -473,10 +622,35 @@ export default function OrdersPage({
                 type="primary"
                 icon={orderActionIcon(order.status)}
                 loading={advancingOrderId === order.id}
-                disabled={Boolean(advancingOrderId) && advancingOrderId !== order.id}
+                disabled={orderActionBusy}
                 onClick={(event) => event.stopPropagation()}
               >
                 {orderActionText(order)}
+              </Button>
+            </Popconfirm>
+          )}
+          {order.status >= 3 && (
+            <Popconfirm
+              title="下载生产文件"
+              description="确认下载该订单的生产文件 ZIP？"
+              okText="下载"
+              cancelText="取消"
+              onConfirm={(event) => {
+                event?.stopPropagation();
+                void downloadProductionFile(order);
+              }}
+              onCancel={(event) => event?.stopPropagation()}
+            >
+              <Button
+                block
+                size="small"
+                type="primary"
+                icon={<PrinterOutlined />}
+                loading={exportingOrderId === order.id}
+                disabled={orderActionBusy}
+                onClick={(event) => event.stopPropagation()}
+              >
+                下载生产文件
               </Button>
             </Popconfirm>
           )}
@@ -485,8 +659,176 @@ export default function OrdersPage({
     }
   ];
 
+  const editSetupModal = editingSetupOrder ? (
+    <Modal
+      open
+      title="开始编辑订单"
+      width="min(780px, calc(100vw - 24px))"
+      destroyOnHidden
+      onCancel={() => {
+        if (!setupSubmitting) setEditingSetupOrder(undefined);
+      }}
+      footer={(
+        <Space>
+          <Button disabled={setupSubmitting} onClick={() => setEditingSetupOrder(undefined)}>取消</Button>
+          <Button
+            type="primary"
+            loading={setupSubmitting}
+            disabled={setupSubmitting || !setupProductId || !setupTemplateId || !setupOptionId}
+            onClick={() => void completeEditSetup()}
+          >
+            保存关联并进入编辑器
+          </Button>
+        </Space>
+      )}
+    >
+      <div className="order-edit-setup-modal">
+        <div className="order-edit-setup-summary-grid">
+          <Card className="order-edit-setup-summary" size="small" title="订单数据">
+            <Descriptions size="small" column={1}>
+              <Descriptions.Item label="订单号">{editingSetupOrder.orderNo || '-'}</Descriptions.Item>
+              <Descriptions.Item label="店铺">{editingSetupOrder.raw.shop || '-'}</Descriptions.Item>
+              <Descriptions.Item label="店铺名">{editingSetupOrder.raw.shop_name || setupShop?.shopName || '-'}</Descriptions.Item>
+              <Descriptions.Item label="当前状态">{editingSetupOrder.statusText || '新订单'}</Descriptions.Item>
+              <Descriptions.Item label="商品">{editingSetupOrder.raw.product || '-'}</Descriptions.Item>
+            </Descriptions>
+          </Card>
+          <Card className="order-edit-setup-summary order-edit-setup-product-information" size="small" title="商品信息">
+            {Object.entries(editingSetupOrder.productInformation).filter(([, value]) => value.trim()).length ? (
+              <Descriptions size="small" column={1}>
+                {Object.entries(editingSetupOrder.productInformation)
+                  .filter(([, value]) => value.trim())
+                  .map(([field, value]) => (
+                    <Descriptions.Item
+                      key={`product-information:${field}`}
+                      label={editingSetupOrder.productInformationLabels[field] || field}
+                    >
+                      {value}
+                    </Descriptions.Item>
+                  ))}
+              </Descriptions>
+            ) : <span className="order-edit-setup-empty-information">暂无商品信息</span>}
+          </Card>
+        </div>
+
+        <Steps
+          className="order-edit-setup-steps"
+          responsive
+          current={editingSetupStep}
+          items={[
+            { title: '确认店铺', description: setupShop?.shopName || setupShop?.shop || editingSetupOrder.raw.shop || '缺少店铺', icon: <ShopOutlined /> },
+            { title: '选择产品', description: setupProductId ? '已选择' : '从当前店铺加载', icon: <AppstoreOutlined /> },
+            { title: '选择尺寸模板', description: setupTemplateId ? '已选择' : '选择模板', icon: <FileTextOutlined /> },
+            { title: '选择规格', description: setupOptionId ? '已选择' : '选择尺寸方案', icon: <CheckOutlined /> }
+          ]}
+        />
+
+        {setupError ? <Alert type="error" showIcon message="操作失败" description={setupError} /> : null}
+
+        <div className="order-edit-setup-step-content">
+          {editingSetupStep === 1 ? (
+            <Card size="small" title="选择当前店铺的产品">
+              {setupProductsLoading ? <div className="order-edit-setup-loading"><Spin tip="正在查询产品..." /></div> : (
+                <Select
+                  className="order-edit-setup-select"
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder={setupShop || editingSetupOrder.raw.shop ? `请选择 ${setupShop?.shopName || setupShop?.shop || editingSetupOrder.raw.shop} 下的产品` : '无法确定店铺'}
+                  value={setupProductId}
+                  options={setupProducts.map((product) => ({ value: product.id, label: product.name }))}
+                  onChange={(value) => {
+                    setSetupProductId(value);
+                    setSetupTemplateId(undefined);
+                    setSetupOptionId(undefined);
+                    setEditingSetupStep(2);
+                  }}
+                  disabled={setupShopId === undefined || setupProductsLoading}
+                />
+              )}
+            </Card>
+          ) : null}
+
+          {editingSetupStep === 2 ? (
+            <Card size="small" title="选择产品下的尺寸模板">
+              {setupTemplatesLoading ? <div className="order-edit-setup-loading"><Spin tip="正在查询尺寸模板..." /></div> : (
+                <Select
+                  className="order-edit-setup-select"
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="请选择尺寸模板"
+                  value={setupTemplateId}
+                  options={setupTemplates.map((template) => ({ value: template.id, label: template.name || `尺寸模板 ${template.id}` }))}
+                  onChange={(value) => {
+                    setSetupTemplateId(value);
+                    setSetupOptionId(undefined);
+                    setEditingSetupStep(3);
+                  }}
+                  disabled={setupTemplatesLoading || setupProducts.length === 0}
+                />
+              )}
+              {!setupTemplatesLoading && setupTemplates.length === 0 ? (
+                <Alert className="order-edit-setup-inline-alert" type="warning" showIcon message="当前产品没有可用的尺寸模板" />
+              ) : null}
+            </Card>
+          ) : null}
+
+          {editingSetupStep === 3 ? (
+            <Card size="small" title="选择模板中的规格">
+              <Select
+                className="order-edit-setup-select"
+                showSearch
+                optionFilterProp="label"
+                placeholder="请选择规格尺寸"
+                value={setupOptionId}
+                options={selectedSetupTemplate?.sizeOptions.map((option) => ({ value: option.id, label: option.label || option.id })) ?? []}
+                onChange={(value) => {
+                  setSetupOptionId(value);
+                  setEditingSetupStep(4);
+                }}
+                disabled={!selectedSetupTemplate}
+              />
+              {!selectedSetupTemplate?.sizeOptions.length ? (
+                <Alert className="order-edit-setup-inline-alert" type="warning" showIcon message="该尺寸模板没有可选规格" />
+              ) : null}
+            </Card>
+          ) : null}
+
+          {editingSetupStep === 4 ? (
+            <Card size="small" title="确认编辑配置">
+              <Descriptions size="small" column={1} bordered>
+                <Descriptions.Item label="店铺">{setupShop?.shopName || setupShop?.shop || '-'}</Descriptions.Item>
+                <Descriptions.Item label="产品">{setupProducts.find((item) => item.id === setupProductId)?.name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="尺寸模板">{selectedSetupTemplate?.name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="规格">{selectedSetupOption?.label || selectedSetupOption?.id || '-'}</Descriptions.Item>
+              </Descriptions>
+              <Alert
+                className="order-edit-setup-inline-alert"
+                type="info"
+                showIcon
+                message="确认模板关联"
+                description="确认后将调用模板关联接口，由后端校验店铺、产品、尺寸模板和规格，并一次事务保存订单。"
+              />
+            </Card>
+          ) : null}
+        </div>
+
+        <div className="order-edit-setup-navigation">
+          <Button disabled={editingSetupStep <= 1} onClick={() => setEditingSetupStep((step) => Math.max(1, step - 1))}>上一步</Button>
+          <Button
+            type="link"
+            disabled={editingSetupStep >= 4 || (editingSetupStep === 1 && !setupProductId) || (editingSetupStep === 2 && !setupTemplateId) || (editingSetupStep === 3 && !setupOptionId)}
+            onClick={() => setEditingSetupStep((step) => Math.min(4, step + 1))}
+          >
+            下一步
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  ) : null;
+
   return (
-    <section className="panel orders-panel">
+    <>
+      <section className="panel orders-panel">
       <header className="panel-header">
         <div className="orders-heading">
           <h1>订单管理</h1>
@@ -556,11 +898,14 @@ export default function OrdersPage({
             ),
             y: tableBodyHeight
           }}
-          rowClassName={({ order }) => selectedOrderId === order.id ? 'selected' : ''}
+          rowClassName={({ order }) => [
+            `order-status-row-${order.status}`,
+            selectedOrderId === order.id ? 'selected' : ''
+          ].filter(Boolean).join(' ')}
           onRow={({ order }) => ({
             onClick: () => setSelectedOrderId(order.id),
             onDoubleClick: () => {
-              if (hasOrderTemplateJson(order)) openOrderInEditor(order);
+              if (order.status < 2 && hasOrderTemplateJson(order)) openOrderInEditor(order);
               else message.warning('该订单尚未存储模板 JSON，无法进入编辑页面');
             }
           })}
@@ -598,6 +943,8 @@ export default function OrdersPage({
           />
         </footer>
       </div>
-    </section>
+      </section>
+      {editSetupModal}
+    </>
   );
 }

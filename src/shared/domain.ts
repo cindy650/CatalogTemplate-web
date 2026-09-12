@@ -55,6 +55,7 @@ export type Shop = {
   id: number;
   shop: string;
   shopName: string;
+  settlementCurrency: string;
   wecomRobotWebhookUrl?: string;
   products: string[];
   productCount: number;
@@ -74,6 +75,7 @@ export type Shop = {
 export type ShopPayload = {
   shop: string;
   shopName: string;
+  settlementCurrency: string;
   wecomRobotWebhookUrl?: string;
   products: string[];
 };
@@ -84,6 +86,13 @@ export type ProductShop = {
   shopName: string;
 };
 
+export type ProductBleed = {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+};
+
 export type ProductCommonSpecValue = {
   id: string;
   label: string;
@@ -92,7 +101,7 @@ export type ProductCommonSpecValue = {
   pageCountOptions: number[];
   sideWidth: number;
   sideHeight: number;
-  bleed: number;
+  bleed: number | ProductBleed;
   spineWidthMode: 'fixed' | 'by_page_count';
   spineWidth: number;
   minSpineWidth: number;
@@ -110,16 +119,36 @@ export type SpineWidthFormula = {
   spineBleed: number;
 };
 
+export type ProductSpineWidthMode = 'range' | 'formula' | 'page_count_table';
+
+export type SpineWidthPageRule = {
+  pageCount: number;
+  spineWidth: number;
+  spineBleed: number;
+};
+
+export type SpineWidthPageRules = {
+  unit: SizeTemplateUnit;
+  matchStrategy: 'ceil' | 'floor' | 'exact';
+  items: SpineWidthPageRule[];
+};
+
 export type ProductCategory = {
   id: number;
   name: string;
+  templateMarker: string;
+  innerPageField: string;
+  productIdentifiers: string[];
+  useSafeDistance: boolean;
   description: string;
   enabled: boolean;
   productNames: string[];
   specifications: string[];
   specificationField: string;
   commonSpecValues: ProductCommonSpecValue[];
+  spineWidthMode: ProductSpineWidthMode;
   spineWidthFormula?: SpineWidthFormula;
+  spineWidthPageRules?: SpineWidthPageRules;
   backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
   spineSafeDistance: SafeDistance;
@@ -130,12 +159,18 @@ export type ProductCategory = {
 
 export type ProductCategoryPayload = {
   name: string;
+  templateMarker?: string;
+  innerPageField?: string;
+  productIdentifiers?: string[];
+  useSafeDistance?: boolean;
   description?: string;
   productNames: string[];
   specifications: string[];
   specificationField: string;
   commonSpecValues?: ProductCommonSpecValue[];
+  spineWidthMode: ProductSpineWidthMode;
   spineWidthFormula?: SpineWidthFormula;
+  spineWidthPageRules?: SpineWidthPageRules;
   backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
   spineSafeDistance: SafeDistance;
@@ -357,7 +392,7 @@ export type CatalogSizeTemplate = {
   minSpineWidth: number;
   maxSpineWidth: number;
   paperThicknessMm: number;
-  spineWidthBasis: 0 | 1;
+  spineWidthBasis: ProductSpineWidthMode;
   backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
   spineSafeDistance: SafeDistance;
@@ -382,7 +417,7 @@ export type CatalogSizeTemplatePayload = {
   minSpineWidth: number;
   maxSpineWidth: number;
   paperThicknessMm: number;
-  spineWidthBasis: 0 | 1;
+  spineWidthBasis: ProductSpineWidthMode;
   backCoverSafeDistance: SafeDistance;
   coverSafeDistance: SafeDistance;
   spineSafeDistance: SafeDistance;
@@ -424,6 +459,7 @@ export type FontLayoutLibraryPayload = {
   productId?: number;
   name: string;
   sortKey: string;
+  previewImage?: string;
   layers: FontLayoutLayerData;
 };
 

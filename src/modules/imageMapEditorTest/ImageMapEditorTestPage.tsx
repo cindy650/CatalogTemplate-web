@@ -7,7 +7,7 @@ import type {
   ImageMapSizeSchemeValue
 } from '../../image-map-editor/editor-entry';
 import { browserAlbumApi } from '../../api';
-import type { CatalogSizeTemplate, CatalogSizeTemplatePayload, Shop } from '@shared/domain';
+import type { CatalogSizeTemplate, CatalogSizeTemplatePayload, ProductSpineWidthMode, Shop, SpineWidthPageRules } from '@shared/domain';
 import {
   createFontLayout,
   deleteFontLayout,
@@ -30,8 +30,13 @@ interface ImageMapEditorTestPageProps {
   initialShopId?: number;
   initialProductId?: number;
   initialSizeSchemes?: Partial<ImageMapSizeSchemeValue>[];
-  productSafeDistances?: Pick<CatalogSizeTemplate, 'backCoverSafeDistance' | 'coverSafeDistance' | 'spineSafeDistance'> & { spineWidthFormula?: import('@shared/domain').SpineWidthFormula };
+  productSafeDistances?: Pick<CatalogSizeTemplate, 'backCoverSafeDistance' | 'coverSafeDistance' | 'spineSafeDistance'> & { useSafeDistance?: boolean; spineWidthFormula?: import('@shared/domain').SpineWidthFormula; spineWidthMode?: ProductSpineWidthMode; spineWidthPageRules?: SpineWidthPageRules };
   skipTextSafeAreaCheck?: boolean;
+  showHeaderSizeSchemeSave?: boolean;
+  fontLayoutManagementEnabled?: boolean;
+  fontLayoutSyncEnabled?: boolean;
+  /** Hide the canvas-property section while editing an existing size template. */
+  hideCanvasSection?: boolean;
   onExit?(): void;
 }
 
@@ -59,7 +64,9 @@ function templateSizeSchemes(
     horizontalBleed: separateBleed ? Number(workarea?.horizontalBleed ?? option.fields.bleed) : option.fields.bleed,
     verticalBleed: separateBleed ? Number(workarea?.verticalBleed ?? option.fields.bleed) : option.fields.bleed,
 		canvasRowGap: Number(workarea?.canvasRowGap ?? 0),
-    spineWidthMode: template.spineWidthBasis === 1 ? 'by_page_count' : 'fixed',
+    spineWidthMode: productSafeDistances?.spineWidthMode === 'formula' || productSafeDistances?.spineWidthMode === 'page_count_table' || template.spineWidthBasis === 'formula' || template.spineWidthBasis === 'page_count_table' ? 'by_page_count' : 'fixed',
+    spineWidthBasis: productSafeDistances?.spineWidthMode ?? (template.spineWidthBasis === 'formula' || template.spineWidthBasis === 'page_count_table' ? template.spineWidthBasis : 'range'),
+    spineWidthPageRules: productSafeDistances?.spineWidthPageRules,
     spineWidth: option.fields.spine_width,
     minSpineWidth: template.minSpineWidth,
     maxSpineWidth: template.maxSpineWidth,
@@ -92,7 +99,7 @@ function editorTemplatePayload(
     minSpineWidth: activeSizeScheme?.minSpineWidth ?? template?.minSpineWidth ?? 0.55,
     maxSpineWidth: activeSizeScheme?.maxSpineWidth ?? template?.maxSpineWidth ?? 0.7,
     paperThicknessMm: activeSizeScheme?.paperThickness ?? template?.paperThicknessMm ?? 0,
-    spineWidthBasis: activeSizeScheme?.spineWidthMode === 'by_page_count' ? 1 : 0,
+    spineWidthBasis: activeSizeScheme?.spineWidthBasis ?? (activeSizeScheme?.spineWidthMode === 'by_page_count' ? 'page_count_table' : 'range'),
     backCoverSafeDistance: activeSizeScheme?.backCoverSafeDistance ?? template?.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
     coverSafeDistance: activeSizeScheme?.coverSafeDistance ?? template?.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
     spineSafeDistance: activeSizeScheme?.spineSafeDistance ?? template?.spineSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
@@ -144,7 +151,7 @@ function templateFieldsChanged(
   return JSON.stringify(comparable(next)) !== JSON.stringify(comparable(previous));
 }
 
-export default function ImageMapEditorTestPage({ shops, template, initialShopId, initialProductId, initialSizeSchemes, productSafeDistances, skipTextSafeAreaCheck, onExit }: ImageMapEditorTestPageProps) {
+export default function ImageMapEditorTestPage({ shops, template, initialShopId, initialProductId, initialSizeSchemes, productSafeDistances, skipTextSafeAreaCheck, showHeaderSizeSchemeSave, fontLayoutManagementEnabled, fontLayoutSyncEnabled, hideCanvasSection, onExit }: ImageMapEditorTestPageProps) {
   const { message } = AntdApp.useApp();
   const [detail, setDetail] = useState<CatalogSizeTemplate | undefined>(template);
   const [loading, setLoading] = useState(Boolean(template));
@@ -265,6 +272,9 @@ export default function ImageMapEditorTestPage({ shops, template, initialShopId,
     () => templateSizeSchemes(detail, productSafeDistances) ?? initialSizeSchemes,
     [detail, initialSizeSchemes, productSafeDistances],
   );
+  const resolvedSkipTextSafeAreaCheck = productSafeDistances
+    ? productSafeDistances.useSafeDistance === false
+    : skipTextSafeAreaCheck === true;
 
   if (loading) {
     return <div className="image-map-editor-test-page template-library-editor-loading"><Spin size="large" /></div>;
@@ -293,10 +303,14 @@ export default function ImageMapEditorTestPage({ shops, template, initialShopId,
           ? { shopId: detail.shopId, templateName: detail.name }
           : { shopId: initialShopId, templateName: '' }}
         initialProductId={detail?.productId ?? initialProductId}
+        showHeaderSizeSchemeSave={showHeaderSizeSchemeSave}
+        hideCanvasSection={hideCanvasSection}
+        fontLayoutManagementEnabled={fontLayoutManagementEnabled}
+        fontLayoutSyncEnabled={fontLayoutSyncEnabled}
         initialSizeSchemes={editorInitialSizeSchemes}
         initialActiveSizeSchemeId={detail?.selectedSizeOptionId}
         selectedFontLayoutId={detail?.selectedFontLayoutId}
-		skipTextSafeAreaCheck={skipTextSafeAreaCheck}
+		skipTextSafeAreaCheck={resolvedSkipTextSafeAreaCheck}
         onExit={onExit}
         shops={shops.map((shop) => ({
           value: shop.id,

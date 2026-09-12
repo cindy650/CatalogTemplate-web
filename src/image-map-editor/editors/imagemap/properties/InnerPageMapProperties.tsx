@@ -1,6 +1,6 @@
-import { PlusOutlined, SaveOutlined } from '@ant-design/icons';
+import { PlusOutlined } from '@ant-design/icons';
 import { Button, Card, Collapse, Form, Input, InputNumber, Select, Space } from 'antd';
-import React from 'react';
+import React, { type ReactNode } from 'react';
 
 import type { CanvasInstance } from '../../../canvas';
 import Scrollbar from '../../../components/common/Scrollbar';
@@ -18,8 +18,9 @@ interface InnerPageMapPropertiesProps {
 	sizeSchemes: ImageMapSizeSchemeValue[];
 	activeSizeSchemeId: string;
 	onAddSizeScheme: () => void;
-	onSaveSizeScheme: (values: Omit<ImageMapSizeSchemeValue, 'id'>) => void;
 	onSelectSizeScheme: (id: string) => void;
+	fontLayoutTrigger?: ReactNode;
+	fontLayoutSelection?: ReactNode;
 }
 
 const InnerPageMapProperties = ({
@@ -29,8 +30,9 @@ const InnerPageMapProperties = ({
 	sizeSchemes,
 	activeSizeSchemeId,
 	onAddSizeScheme,
-	onSaveSizeScheme,
 	onSelectSizeScheme,
+	fontLayoutTrigger,
+	fontLayoutSelection,
 }: InnerPageMapPropertiesProps) => {
 	const [form] = Form.useForm();
 	const workarea = canvasRef?.handler?.workarea;
@@ -70,33 +72,6 @@ const InnerPageMapProperties = ({
 
 	if (!canvasRef) return null;
 
-	const saveSizeScheme = async () => {
-		let values: Record<string, any>;
-		try {
-			values = await form.validateFields(['sizeSchemeLabel', 'unit', 'sideWidth', 'sideHeight']);
-		} catch {
-			return;
-		}
-		onSaveSizeScheme({
-			label: String(values.sizeSchemeLabel ?? '').trim(),
-			unit: values.unit,
-			pageCount: 1,
-			pageCountOptions: [1],
-			sideWidth: Number(values.sideWidth) || 1,
-			sideHeight: Number(values.sideHeight) || 1,
-			bleed: 0,
-			spineWidthMode: 'fixed',
-			spineWidth: 0,
-			minSpineWidth: 0,
-			maxSpineWidth: 0,
-			spineBleed: 0,
-			backCoverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
-			coverSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
-			spineSafeDistance: { top: 0, right: 0, bottom: 0, left: 0 },
-			paperThickness: 0,
-		});
-	};
-
 	return (
 		<Scrollbar>
 			<Form
@@ -133,12 +108,13 @@ const InnerPageMapProperties = ({
 						children: PropertyDefinition.map.image.component.render(canvasRef, form, workarea),
 					}]}
 				/>
+				{fontLayoutTrigger}
+				{fontLayoutSelection}
 				<section className="rde-inner-page-size-section">
 					<div className="rde-size-scheme-toolbar">
 						<div className="rde-size-scheme-heading"><strong>尺寸方案</strong><span>{sizeSchemes.length} 个成品规格</span></div>
 						<Space size={4}>
 							<Button type="text" size="small" icon={<PlusOutlined />} onClick={onAddSizeScheme}>新增内页规格</Button>
-							<Button type="primary" ghost size="small" icon={<SaveOutlined />} onClick={() => void saveSizeScheme()}>保存内页</Button>
 						</Space>
 					</div>
 					<div className="rde-size-scheme-cards" role="listbox" aria-label="尺寸规格">

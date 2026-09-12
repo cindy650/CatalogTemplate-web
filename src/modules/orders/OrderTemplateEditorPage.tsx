@@ -1,7 +1,8 @@
-import { Button, Card, Descriptions, Empty, Result, Tooltip } from 'antd';
-import { DownOutlined, DragOutlined, UpOutlined } from '@ant-design/icons';
+import { App, Button, Card, Empty, Result, Tooltip } from 'antd';
+import { DownOutlined, DragOutlined, SendOutlined, TranslationOutlined, UpOutlined } from '@ant-design/icons';
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type { Order, ProductCategory, Shop } from '@shared/domain';
+import { browserAlbumApi } from '../../api';
 import { ImageMapEditor } from '../../image-map-editor/editor-entry';
 import type {
   ImageMapEditorDocumentValue,
@@ -20,13 +21,13 @@ import {
   saveFontLayout,
   updateFontLayout
 } from '../imageMapEditorTest/imageMapEditorHost';
-import { isOathBookProduct } from '../productRules';
 
 interface OrderTemplateEditorPageProps {
   order: Order;
   shops: Shop[];
   products: ProductCategory[];
   saveTemplate?(order: Order, templateJson: Record<string, unknown>): void | Promise<void>;
+  reloadOrders?(): Promise<void>;
   onExit(): void;
 }
 
@@ -37,6 +38,11 @@ function finiteNumber(value: unknown, fallback = 0): number {
 
 function orderSizeScheme(order: Order, product?: ProductCategory): ImageMapSizeSchemeValue {
   const snapshot = order.matchedTemplate;
+  const bleedDetails = snapshot.bleed_details && typeof snapshot.bleed_details === 'object' && !Array.isArray(snapshot.bleed_details)
+    ? snapshot.bleed_details as Record<string, unknown>
+    : {};
+  const horizontalBleed = bleedDetails.horizontal ?? bleedDetails.horizontalBleed ?? bleedDetails.left ?? snapshot.horizontal_bleed ?? snapshot.horizontalBleed ?? snapshot.bleed;
+  const verticalBleed = bleedDetails.vertical ?? bleedDetails.verticalBleed ?? bleedDetails.top ?? snapshot.vertical_bleed ?? snapshot.verticalBleed ?? snapshot.bleed;
   const selectedSize = String(snapshot.selected_size ?? snapshot.selectedSize ?? 'order-size');
   const unitValue = String(snapshot.size_unit ?? snapshot.sizeUnit ?? 'in');
   const unit = unitValue === 'cm' || unitValue === 'mm' ? unitValue : 'in';
@@ -50,7 +56,9 @@ function orderSizeScheme(order: Order, product?: ProductCategory): ImageMapSizeS
     pageCountOptions: [finiteNumber(snapshot.page_count ?? snapshot.pageCount, 50)],
     sideWidth: finiteNumber(snapshot.single_side_width ?? snapshot.singleSideWidth, 9),
     sideHeight: finiteNumber(snapshot.single_side_height ?? snapshot.singleSideHeight, 6),
-    bleed: finiteNumber(snapshot.bleed),
+    bleed: finiteNumber(snapshot.bleed ?? horizontalBleed ?? verticalBleed),
+    horizontalBleed: finiteNumber(horizontalBleed),
+    verticalBleed: finiteNumber(verticalBleed),
     spineWidthMode: 'fixed',
     spineWidth: finiteNumber(snapshot.spine_width ?? snapshot.spineWidth),
     minSpineWidth: finiteNumber(snapshot.spine_width ?? snapshot.spineWidth),
@@ -127,12 +135,16 @@ function resolveOrderProduct(order: Order, products: ProductCategory[]): Product
     .some((name) => name.trim().toLocaleLowerCase() === orderProductName));
 }
 
-export default function OrderTemplateEditorPage({ order, shops, products, saveTemplate, onExit }: OrderTemplateEditorPageProps) {
+export default function OrderTemplateEditorPage({ order, shops, products, saveTemplate, reloadOrders, onExit }: OrderTemplateEditorPageProps) {
+  const { message } = App.useApp();
   const containerRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ offsetX: number; offsetY: number }>();
   const [cardPosition, setCardPosition] = useState<{ left: number; top: number }>();
   const [productInformationExpanded, setProductInformationExpanded] = useState(true);
+  const [translatedProductInformation] = useState<Record<string, string>>({});
+  const [sendingPreview, setSendingPreview] = useState(false);
+  const [previewSent, setPreviewSent] = useState(false);
   const initialLayers = orderLayers(order);
 
   useEffect(() => {
@@ -200,8 +212,27 @@ export default function OrderTemplateEditorPage({ order, shops, products, saveTe
     .map(([key, value]) => ({
       key,
       label: order.productInformationLabels[key] || key,
-      value
+      value,
+      translation: translatedProductInformation[key] || ''
     }));
+
+  const requestProductInformationTranslation = () => {
+    message.info('翻译接口暂未接入，当前先展示原始商品信息。');
+  };
+
+  const sendPreviewImages = async () => {
+    setSendingPreview(true);
+    try {
+      await browserAlbumApi.orders.sendPreviewImages(order);
+      await reloadOrders?.();
+      setPreviewSent(true);
+      message.success(`订单 ${order.orderNo} 的示意图已发送`);
+    } catch (error) {
+      message.error(`订单 ${order.orderNo} 发送示意图失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSendingPreview(false);
+    }
+  };
 
   const startDragging = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !containerRef.current || !cardRef.current) return;
@@ -228,10 +259,24 @@ export default function OrderTemplateEditorPage({ order, shops, products, saveTe
         initialLayers={initialLayers}
         initialSizeSchemes={[sizeScheme]}
         initialActiveSizeSchemeId={sizeScheme.id}
-        skipTextSafeAreaCheck={product ? isOathBookProduct(product) : false}
+        skipTextSafeAreaCheck={product?.useSafeDistance === false}
         selectedFontLayoutId={layoutId > 0 ? layoutId : undefined}
-        hiddenActivities={['basicInfo', 'canvas', 'fontLayouts']}
+        hiddenActivities={['basicInfo', 'canvas']}
         saveConfirmTitle="确认修改订单"
+        saveButtonPrimary
+        headerActionsBeforeSave={order.status === 0 && !previewSent ? (
+          <Button
+            className="rde-order-preview-btn"
+            type="primary"
+            size="small"
+            icon={<SendOutlined />}
+            loading={sendingPreview}
+            disabled={sendingPreview}
+            onClick={() => void sendPreviewImages()}
+          >
+            发送示意图
+          </Button>
+        ) : null}
         alwaysEnableSave
         onSaveDocument={saveTemplate
           ? (document) => saveTemplate(order, savedOrderTemplateJson(order, document))
@@ -265,36 +310,62 @@ export default function OrderTemplateEditorPage({ order, shops, products, saveTe
               className="order-product-information-drag-handle"
               onMouseDown={startDragging}
             >
-              <DragOutlined />
-              <span className="order-product-information-title">商品信息</span>
-              <span className="order-product-information-order-number">订单号：{order.orderNo}</span>
+              <div className="order-product-information-heading">
+                <span className="order-product-information-title-row">
+                  <DragOutlined />
+                  <span className="order-product-information-title">商品信息</span>
+                </span>
+                <span className="order-product-information-order-number">订单号：{order.orderNo}</span>
+              </div>
             </div>
           )}
           extra={(
-            <Tooltip title={productInformationExpanded ? '收起商品信息' : '展开商品信息'}>
-              <Button
-                type="text"
-                size="small"
-                icon={productInformationExpanded ? <UpOutlined /> : <DownOutlined />}
-                aria-label={productInformationExpanded ? '收起商品信息' : '展开商品信息'}
-                onClick={() => setProductInformationExpanded((expanded) => !expanded)}
-              />
-            </Tooltip>
+            <div className="order-product-information-header-actions">
+              <Tooltip title="翻译商品信息">
+                <Button
+                  size="small"
+                  icon={<TranslationOutlined />}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    requestProductInformationTranslation();
+                  }}
+                >
+                  翻译
+                </Button>
+              </Tooltip>
+              <Tooltip title={productInformationExpanded ? '收起商品信息' : '展开商品信息'}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={productInformationExpanded ? <UpOutlined /> : <DownOutlined />}
+                  aria-label={productInformationExpanded ? '收起商品信息' : '展开商品信息'}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setProductInformationExpanded((expanded) => !expanded);
+                  }}
+                />
+              </Tooltip>
+            </div>
           )}
         >
           {productInformationExpanded ? (
             <div className="order-product-information-card-body">
               {productInformation.length ? (
-                <Descriptions
-                  bordered
-                  size="small"
-                  column={1}
-                  items={productInformation.map((item) => ({
-                    key: item.key,
-                    label: item.label,
-                    children: item.value
-                  }))}
-                />
+                <div className="order-product-information-list">
+                  {productInformation.map((item) => (
+                    <div className="order-product-information-field" key={item.key}>
+                      <div className="order-product-information-field-label">{item.label}</div>
+                      <div className="order-product-information-field-source">{item.value}</div>
+                      {item.translation ? (
+                        <div className="order-product-information-field-translation">
+                          {item.translation}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无商品信息" />
               )}

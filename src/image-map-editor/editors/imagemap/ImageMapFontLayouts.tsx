@@ -33,6 +33,7 @@ export interface ImageMapFontLayoutOption {
 	id: string | number;
 	name: string;
 	category?: string;
+	productCategoryName?: string;
 	productId?: ImageMapShopValue;
 	previewImage?: string;
 	layerCount: number;
@@ -111,7 +112,14 @@ export type ImageMapFontLayoutSizeOptionSyncer = (
 	items: Array<{ sizeOptionId: string; layers: ImageMapFontLayoutLayerData }>,
 ) => Promise<{ syncedCount?: number; justSyncedSizeOptionIds: string[]; missingSizeOptionIds: string[]; message?: string }>;
 
+export interface ImageMapFontLayoutActions {
+	clear?: () => void;
+	sync?: () => void;
+}
+
 interface ImageMapFontLayoutsProps {
+	managementEnabled?: boolean;
+	syncEnabled?: boolean;
 	createFontLayout?: ImageMapFontLayoutCreator;
 	createEmptyCanvasLayers?: (canvasRows: 1 | 2) => ImageMapFontLayoutLayerData;
 	defaultShopId?: ImageMapShopValue;
@@ -122,16 +130,23 @@ interface ImageMapFontLayoutsProps {
 	loadFontLayoutProducts?: ImageMapFontLayoutProductLoader;
 	loadFontLayouts?: ImageMapFontLayoutLoader;
 	loadFontLayoutSizeOptions?: ImageMapFontLayoutSizeOptionLoader;
+	onRegisterFontLayoutActions?: (actions: ImageMapFontLayoutActions) => void;
+	onSelectedFontLayoutChange?: (layout?: ImageMapFontLayoutOption) => void;
+	onRefreshFontLayoutSize?: () => Promise<void>;
 	onSelectFontLayout?: (layout: ImageMapFontLayoutOption) => void | Promise<void>;
+	selectedFontLayoutId?: ImageMapFontLayoutOption['id'];
 	saveFontLayout?: ImageMapFontLayoutSaver;
 	sizeOptions?: ImageMapFontLayoutSizeOption[];
 	sizeTemplateId?: number;
 	syncFontLayoutSizeOptions?: ImageMapFontLayoutSizeOptionSyncer;
+	renderActionsExternally?: boolean;
 	shops: ImageMapShopOption[];
 	updateFontLayout?: ImageMapFontLayoutUpdater;
 }
 
 const ImageMapFontLayouts = ({
+	managementEnabled = false,
+	syncEnabled = false,
 	createFontLayout,
 	createEmptyCanvasLayers,
 	defaultShopId,
@@ -142,12 +157,17 @@ const ImageMapFontLayouts = ({
 	loadFontLayoutProducts,
 	loadFontLayouts,
 	loadFontLayoutSizeOptions,
+	onRegisterFontLayoutActions,
+	onSelectedFontLayoutChange,
+	onRefreshFontLayoutSize,
 	onSelectFontLayout,
+	selectedFontLayoutId: initialSelectedFontLayoutId,
 	saveFontLayout,
 	shops,
 	sizeOptions = [],
 	sizeTemplateId,
 	syncFontLayoutSizeOptions,
+	renderActionsExternally = false,
 	updateFontLayout,
 }: ImageMapFontLayoutsProps) => {
 	const { message } = App.useApp();
@@ -189,6 +209,15 @@ const ImageMapFontLayouts = ({
 	const canvasRowsFromLayers = React.useCallback((layers?: ImageMapFontLayoutLayerData): 1 | 2 => (
 		layers?.objects.find(object => object.id === 'workarea')?.canvasRows === 2 ? 2 : 1
 	), []);
+
+	React.useEffect(() => {
+		if (initialSelectedFontLayoutId === undefined || selectedLayoutId !== undefined) return;
+		const initialLayout = layouts.find(layout => String(layout.id) === String(initialSelectedFontLayoutId));
+		if (initialLayout) {
+			setSelectedLayoutId(initialLayout.id);
+			onSelectedFontLayoutChange?.(initialLayout);
+		}
+	}, [initialSelectedFontLayoutId, layouts, onSelectedFontLayoutChange, selectedLayoutId]);
 
 	React.useEffect(() => {
 		setSelectedShopId(current => {
@@ -380,12 +409,18 @@ const ImageMapFontLayouts = ({
 
 	const selectLayout = async (layout: ImageMapFontLayoutOption) => {
 		setSelectedLayoutId(layout.id);
+		onSelectedFontLayoutChange?.(layout);
 		setOperationError('');
 		try {
 			await onSelectFontLayout?.(layout);
 		} catch (selectError) {
 			setOperationError(selectError instanceof Error ? selectError.message : String(selectError));
 		}
+	};
+
+	const clearSelectedLayout = () => {
+		setSelectedLayoutId(undefined);
+		onSelectedFontLayoutChange?.(undefined);
 	};
 
 	const saveSelectedLayout = async () => {
@@ -404,7 +439,7 @@ const ImageMapFontLayouts = ({
 	};
 
 	const openSyncModal = () => {
-		if (!selectedLayout || sizeTemplateId === undefined || sizeOptions.length === 0) return;
+		if (!selectedLayout || !saveFontLayout || sizeTemplateId === undefined || sizeOptions.length === 0) return;
 		setOperationError('');
 		setSyncSelectedIds(sizeOptions.map(option => option.id));
 		setSyncStatuses([]);
@@ -419,17 +454,23 @@ const ImageMapFontLayouts = ({
 	};
 
 	const syncSelectedLayoutSizes = async () => {
-		if (!selectedLayout || sizeTemplateId === undefined || !syncFontLayoutSizeOptions || !getCanvasLayers || syncSelectedIds.length === 0) return;
+		if (!selectedLayout || !saveFontLayout || sizeTemplateId === undefined || !syncFontLayoutSizeOptions || !getCanvasLayers || syncSelectedIds.length === 0) return;
 		setSyncing(true);
 		setOperationError('');
 		try {
 			const layers = getCanvasLayers();
+			if (saveFontLayout) {
+				await saveFontLayout(selectedLayout.id, layers);
+			}
 			const result = await syncFontLayoutSizeOptions(
 				selectedLayout.id,
 				sizeTemplateId,
 				syncSelectedIds.map(sizeOptionId => ({ sizeOptionId, layers })),
 			);
+			await onRefreshFontLayoutSize?.();
 			setSyncOpen(false);
+			clearSelectedLayout();
+			await reload(true);
 			message.success(result.message || `已同步 ${result.syncedCount ?? syncSelectedIds.length} 个尺寸`);
 		} catch (syncError) {
 			setOperationError(syncError instanceof Error ? syncError.message : String(syncError));
@@ -446,6 +487,7 @@ const ImageMapFontLayouts = ({
 		setOperationError('');
 		try {
 			await deleteFontLayout(layout.id);
+			if (layout.id === selectedLayoutId) clearSelectedLayout();
 			await reload(true);
 		} catch (deleteError) {
 			setOperationError(deleteError instanceof Error ? deleteError.message : String(deleteError));
@@ -454,10 +496,18 @@ const ImageMapFontLayouts = ({
 		}
 	};
 
+	React.useEffect(() => {
+		onRegisterFontLayoutActions?.({
+			clear: clearSelectedLayout,
+			sync: openSyncModal,
+		});
+		return () => onRegisterFontLayoutActions?.({});
+	});
+
 	return (
 		<React.Fragment>
 			<section className="rde-imagemap-font-layouts">
-				<EditorPanelHeader eyebrow="字体" title="字体布局" />
+				<EditorPanelHeader eyebrow="布局" title="字体布局" />
 				<div className="rde-imagemap-font-layouts-content">
 					<div className="rde-font-layout-summary">
 						<div className="rde-font-layout-summary-copy">
@@ -465,42 +515,48 @@ const ImageMapFontLayouts = ({
 							<span>{layouts.length} 个布局</span>
 						</div>
 					</div>
-					<div className="rde-font-layout-actions">
-						<Button size="small" icon={<PlusOutlined />} disabled={selectedShopId === undefined || !createFontLayout} onClick={openCreateModal}>新增布局</Button>
-						<Button size="small" type="primary" ghost icon={<SaveOutlined />} loading={saving} disabled={!selectedLayout || !saveFontLayout || !getCanvasLayers} onClick={() => void saveSelectedLayout()}>保存</Button>
-						<Button size="small" icon={<CopyOutlined />} disabled={!selectedLayout || !createFontLayout || !getCanvasLayers} onClick={openSaveAsModal}>另存为</Button>
-						<Button size="small" icon={<SyncOutlined />} disabled={!selectedLayout || sizeTemplateId === undefined || sizeOptions.length === 0 || !syncFontLayoutSizeOptions || !getCanvasLayers} onClick={openSyncModal}>同步尺寸</Button>
-					</div>
+					{managementEnabled ? (
+						<div className="rde-font-layout-actions">
+							<Button size="small" icon={<PlusOutlined />} disabled={selectedShopId === undefined || !createFontLayout} onClick={openCreateModal}>新增布局</Button>
+							{!renderActionsExternally ? <Button size="small" type="primary" ghost icon={<SaveOutlined />} loading={saving} disabled={!selectedLayout || !saveFontLayout || !getCanvasLayers} onClick={() => void saveSelectedLayout()}>保存</Button> : null}
+							<Button size="small" icon={<CopyOutlined />} disabled={!selectedLayout || !createFontLayout || !getCanvasLayers} onClick={openSaveAsModal}>另存为</Button>
+						</div>
+					) : null}
+					{syncEnabled && !renderActionsExternally ? (
+						<div className="rde-font-layout-actions">
+									<Button size="small" icon={<SyncOutlined />} disabled={!selectedLayout || !saveFontLayout || sizeTemplateId === undefined || sizeOptions.length === 0 || !syncFontLayoutSizeOptions || !getCanvasLayers} onClick={openSyncModal}>同步尺寸</Button>
+						</div>
+					) : null}
 					<div className="rde-font-layout-shop-field">
 						<span>所属产品</span>
 						<Select
-							showSearch
-							optionFilterProp="label"
 							aria-label="字体布局所属产品"
 							placeholder="选择产品"
+							styles={{ popup: { root: { zIndex: 1400 } } }}
 							value={selectedProductId}
 							options={productOptions}
 							loading={productLoading}
 							onChange={value => {
 								setSelectedProductId(value);
 								setSelectedLayoutId(undefined);
+								onSelectedFontLayoutChange?.(undefined);
 							}}
 						/>
 					</div>
 					<div className="rde-font-layout-shop-field">
 						<span>所属店铺</span>
 						<Select
-							showSearch
-							optionFilterProp="label"
 							aria-label="字体布局所属店铺"
 							placeholder="选择店铺"
-			value={selectedShopId}
+							styles={{ popup: { root: { zIndex: 1400 } } }}
+							value={selectedShopId}
 			options={shops}
-			onChange={value => {
-				setSelectedShopId(value);
-				setSelectedProductId(undefined);
-				setSelectedLayoutId(undefined);
-			}}
+				onChange={value => {
+					setSelectedShopId(value);
+					setSelectedProductId(undefined);
+					setSelectedLayoutId(undefined);
+					onSelectedFontLayoutChange?.(undefined);
+				}}
 						/>
 					</div>
 					{operationError && !createOpen ? (
@@ -526,21 +582,21 @@ const ImageMapFontLayouts = ({
 								<div className={`rde-font-layout-item${layout.id === selectedLayoutId ? ' is-selected' : ''}`} key={layout.id} role="option" aria-selected={layout.id === selectedLayoutId} tabIndex={0} onClick={() => void selectLayout(layout)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void selectLayout(layout); } }}>
 									<div className="rde-font-layout-preview" onClick={layout.previewImage ? event => event.stopPropagation() : undefined}>
 										{layout.previewImage ? (
-											<Image src={layout.previewImage} alt={`${layout.name || '字体布局'}预览图`} preview={{ src: layout.previewImage }} />
+										<Image src={layout.previewImage} alt={`${layout.name || '字体布局'}预览图`} preview={{ src: layout.previewImage }} />
 										) : (
 											<FileTextOutlined />
 										)}
 									</div>
 									<div className="rde-font-layout-copy">
-										<strong>{layout.name || '未命名字体布局'}</strong>
+									<strong>{layout.name || '未命名字体布局'}</strong>
 										<span>
-											{layout.category ? `${layout.category} · ` : ''}{layout.layerCount} 个图层
+											{(layout.productCategoryName || layout.category) ? `${layout.productCategoryName || layout.category} · ` : ''}{layout.layerCount} 个图层
 										</span>
 									</div>
-									<Tooltip title="编辑布局">
+									{managementEnabled ? <Tooltip title="编辑布局">
 										<Button type="text" size="small" className="rde-font-layout-edit" icon={<EditOutlined />} disabled={!updateFontLayout} aria-label={`编辑 ${layout.name || '未命名字体布局'}`} onClick={event => { event.stopPropagation(); openEditModal(layout); }} />
-									</Tooltip>
-									<Popconfirm
+									</Tooltip> : null}
+									{managementEnabled ? <Popconfirm
 										title="删除字体布局"
 										description={`确定删除“${layout.name || '未命名字体布局'}”吗？`}
 										okText="删除"
@@ -559,7 +615,7 @@ const ImageMapFontLayouts = ({
 											aria-label={`删除 ${layout.name || '未命名字体布局'}`}
 											onClick={event => event.stopPropagation()}
 										/>
-									</Popconfirm>
+									</Popconfirm> : null}
 								</div>
 							))}
 						</div>
@@ -605,6 +661,7 @@ const ImageMapFontLayouts = ({
 									allowClear
 									showSearch
 									optionFilterProp="label"
+									styles={{ popup: { root: { zIndex: 1400 } } }}
 									disabled={creating}
 									loading={categoryLoading}
 									value={createCategory}
@@ -619,6 +676,7 @@ const ImageMapFontLayouts = ({
 								<Select
 									showSearch
 									optionFilterProp="label"
+									styles={{ popup: { root: { zIndex: 1400 } } }}
 									disabled={creating}
 									value={createShopId}
 									options={shops}

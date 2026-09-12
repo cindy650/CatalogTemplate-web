@@ -46,6 +46,7 @@ export const loadFontLayouts = async (shopId: string | number, productId?: numbe
     id: layout.id,
     name: layout.name,
     category: layout.productCategoryName,
+    productCategoryName: layout.productCategoryName,
     productId: layout.productId,
     previewImage: layout.previewImage,
     layerCount: layout.layers.objects.length,

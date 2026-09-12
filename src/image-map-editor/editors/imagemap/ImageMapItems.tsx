@@ -1,5 +1,5 @@
 import { SearchOutlined } from '@ant-design/icons';
-import { Button, Collapse, Input, message, notification } from 'antd';
+import { Button, Input, message, notification } from 'antd';
 import clsx from 'clsx';
 import React from 'react';
 import { v4 as uuid } from 'uuid';
@@ -10,8 +10,6 @@ import CommonButton from '../../components/common/CommonButton';
 import Scrollbar from '../../components/common/Scrollbar';
 import {
 	EditorPanelHeader,
-	PALETTE_COLLAPSE_PROPS,
-	resolvePaletteActiveKeys,
 } from '../../components/editor';
 import { Flex } from '../../components/flex';
 import ImageMapList from './ImageMapList';
@@ -53,7 +51,6 @@ const ImageMapItems = React.forwardRef<ImageMapItemsHandle, ImageMapItemsProps>(
 	{ canvasRef, descriptors = {}, mode = 'assets', selectedItem }: ImageMapItemsProps,
 	ref,
 ) {
-	const [activeKey, setActiveKey] = React.useState<string[] | null>(null);
 	const [collapse, setCollapse] = React.useState(false);
 	const [textSearch, setTextSearch] = React.useState('');
 	const dragItemRef = React.useRef<DragItem>(null);
@@ -174,9 +171,6 @@ const ImageMapItems = React.forwardRef<ImageMapItemsHandle, ImageMapItemsProps>(
 		(prev, current) => prev.concat(current),
 		[],
 	);
-	const filteredDescriptors = textSearch.length
-		? allDescriptors.filter(descriptor => descriptor.name.toLowerCase().includes(textSearch.toLowerCase()))
-		: allDescriptors;
 
 	const handleAddItem = (item: DescriptorItem, centered?: boolean) => {
 		if (!canvasRef) {
@@ -272,6 +266,27 @@ const ImageMapItems = React.forwardRef<ImageMapItemsHandle, ImageMapItemsProps>(
 		</Flex>
 	);
 
+	const renderDescriptorGroups = () => (
+		<div className="rde-editor-items-categories">
+			{Object.entries(descriptors).map(([key, items]) => {
+				const visibleItems = textSearch.length
+					? items.filter(item => item.name.toLowerCase().includes(textSearch.toLowerCase()))
+					: items;
+				if (visibleItems.length === 0) return null;
+				const accent = getImageMapPaletteAccent(key);
+				return (
+					<section className="rde-editor-items-category-section" key={key}>
+						<div className="rde-editor-items-category-label">
+							<span style={{ backgroundColor: accent }} aria-hidden="true" />
+							{getImageMapPaletteLabel(key)}
+						</div>
+						{renderItems(visibleItems, key)}
+					</section>
+				);
+			})}
+		</div>
+	);
+
 	React.useImperativeHandle(
 		ref,
 		() => ({
@@ -322,7 +337,7 @@ const ImageMapItems = React.forwardRef<ImageMapItemsHandle, ImageMapItemsProps>(
 						{mode === 'layers' ? (
 							<ImageMapList canvasRef={canvasRef} selectedItem={selectedItem} />
 						) : textSearch.length ? (
-							renderItems(filteredDescriptors)
+							renderDescriptorGroups()
 						) : collapse ? (
 							<Flex
 								flexWrap="wrap"
@@ -333,27 +348,7 @@ const ImageMapItems = React.forwardRef<ImageMapItemsHandle, ImageMapItemsProps>(
 								{allDescriptors.map(item => renderItem(item))}
 							</Flex>
 						) : (
-							<Collapse
-								style={{ width: '100%' }}
-								{...PALETTE_COLLAPSE_PROPS}
-								expandIconPosition="end"
-								activeKey={resolvePaletteActiveKeys(activeKey, Object.keys(descriptors))}
-								onChange={keys => setActiveKey(Array.isArray(keys) ? keys : [keys])}
-								items={Object.keys(descriptors).map(key => {
-									const accent = getImageMapPaletteAccent(key);
-									return {
-										key,
-										label: (
-											<span className="rde-editor-items-category">
-												<span style={{ backgroundColor: accent }} />
-											{getImageMapPaletteLabel(key)}
-											</span>
-										),
-										showArrow: !collapse,
-										children: renderItems(descriptors[key], key),
-									};
-								})}
-							/>
+							renderDescriptorGroups()
 						)}
 					</div>
 				</Scrollbar>

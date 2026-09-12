@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { App, Breadcrumb, Button, Form, Input, InputNumber, Layout, Menu, Modal, Select, Spin, Tag, Typography } from 'antd';
-import { DeleteOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MinusOutlined, PlusOutlined } from '@ant-design/icons';
-import type { ProductCategory, ProductCategoryPayload, ProductCommonSpecValue, SafeDistance, Shop, SpineWidthFormula } from '@shared/domain';
+import { App, Avatar, Badge, Breadcrumb, Button, Dropdown, Form, Input, InputNumber, Layout, Menu, Modal, Segmented, Select, Spin, Switch, Tag, Tooltip, Typography } from 'antd';
+import { BellOutlined, DeleteOutlined, DownOutlined, LeftOutlined, MinusOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
+import type { LocalUserProfile, ProductBleed, ProductCategory, ProductCategoryPayload, ProductCommonSpecValue, ProductSpineWidthMode, SafeDistance, Shop, SpineWidthFormula, SpineWidthPageRules } from '@shared/domain';
 import type { ModuleId } from '../modules/types';
 import { resolveImageMapSpineWidth } from '../image-map-editor/editors/imagemap/ImageMapSizeScheme';
 import {
@@ -11,6 +11,9 @@ import {
   getInnerPagesMenuSelection,
   getInnerPagesProductMenuKey,
   getInnerPagesShopMenuKey,
+  getFontLayoutsMenuSelection,
+  getFontLayoutsProductMenuKey,
+  getFontLayoutsShopMenuKey,
   getSizeTemplateShopIdFromMenuKey,
   getSizeTemplateShopMenuKey,
   getProductMenuSelection,
@@ -21,6 +24,7 @@ import {
 } from '../modules/moduleRegistry';
 import type { ProductMenuActions } from '../modules/moduleRegistry';
 import type { TemplateLibraryShopSelection } from '../modules/moduleRegistry';
+import WeatherBreadcrumb, { type WeatherTone } from './WeatherBreadcrumb';
 
 const { Header, Sider, Content } = Layout;
 
@@ -73,6 +77,25 @@ const defaultCommonSpecValue: ProductCommonSpecValue = {
   paperThickness: 0
 };
 
+const emptyDoubleBleed = (value = 0): ProductBleed => ({ top: value, right: value, bottom: value, left: value });
+
+function normalizeProductBleed(value: unknown, mode: 'single' | 'double'): number | ProductBleed {
+  if (mode === 'single') {
+    if (typeof value === 'object' && value !== null) return Number((value as Partial<ProductBleed>).left) || 0;
+    return Number(value) || 0;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const current = value as Partial<ProductBleed>;
+    return {
+      top: Number(current.top) || 0,
+      right: Number(current.right) || 0,
+      bottom: Number(current.bottom) || 0,
+      left: Number(current.left) || 0
+    };
+  }
+  return emptyDoubleBleed(Number(value) || 0);
+}
+
 const defaultSpineWidthFormula: SpineWidthFormula = {
   unit: 'cm',
   pageCountCoefficient: 0.2,
@@ -80,6 +103,15 @@ const defaultSpineWidthFormula: SpineWidthFormula = {
   baseWidth: 1,
   additionalWidth: 0.9,
   spineBleed: 0
+};
+
+const defaultSpineWidthPageRules: SpineWidthPageRules = {
+  unit: 'cm',
+  matchStrategy: 'exact',
+  items: [
+    { pageCount: 10, spineWidth: 1.5, spineBleed: 0 },
+    { pageCount: 20, spineWidth: 1.8, spineBleed: 0 }
+  ]
 };
 
 function normalizedSpineWidthFormula(value?: Partial<SpineWidthFormula>): SpineWidthFormula | undefined {
@@ -94,9 +126,26 @@ function normalizedSpineWidthFormula(value?: Partial<SpineWidthFormula>): SpineW
   };
 }
 
+function normalizedSpineWidthPageRules(value?: Partial<SpineWidthPageRules>): SpineWidthPageRules | undefined {
+  if (!value) return undefined;
+  const items = Array.isArray(value.items) ? value.items.map(item => ({
+    pageCount: Math.max(1, Math.round(Number(item.pageCount) || 0)),
+    spineWidth: Math.max(0, Number(item.spineWidth) || 0),
+    spineBleed: Math.max(0, Number(item.spineBleed) || 0)
+  })).filter(item => item.pageCount > 0) : [];
+  return {
+    unit: value.unit === 'in' || value.unit === 'mm' ? value.unit : 'cm',
+    matchStrategy: 'exact',
+    items: items.sort((left, right) => left.pageCount - right.pageCount)
+  };
+}
+
 function normalizedCommonSpecValue(
   value: Partial<ProductCommonSpecValue>,
-  formula?: SpineWidthFormula
+  formula?: SpineWidthFormula,
+  bleedMode: 'single' | 'double' = 'single',
+  productSpineWidthMode: ProductSpineWidthMode = 'range',
+  pageRules?: SpineWidthPageRules
 ): ProductCommonSpecValue {
   const pageCountOptions = Array.isArray(value.pageCountOptions)
     ? value.pageCountOptions.map(Number).filter((count) => Number.isFinite(count) && count > 0)
@@ -104,31 +153,38 @@ function normalizedCommonSpecValue(
   const pageCount = Number(value.pageCount) > 0
     ? Number(value.pageCount)
     : pageCountOptions[0] ?? 50;
-  const spineWidthMode = value.spineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed';
-  const usesFormula = Boolean(formula) && spineWidthMode === 'by_page_count';
+  const spineWidthMode = productSpineWidthMode === 'range' ? 'fixed' : 'by_page_count';
+  const usesFormula = Boolean(formula) && productSpineWidthMode === 'formula';
+  const unit = value.unit === 'mm' || value.unit === 'cm' ? value.unit : 'in';
+  const tableRule = productSpineWidthMode === 'page_count_table' ? matchedSpineWidthPageRule(pageRules, pageCount) : undefined;
   const spineWidth = usesFormula
     ? resolveImageMapSpineWidth({
       ...value,
+      bleed: typeof value.bleed === 'number' ? value.bleed : Number(value.bleed?.left ?? value.bleed?.right ?? 0),
       pageCount,
       pageCountOptions,
       spineWidthMode,
       spineWidthFormula: formula
     })
-    : Number(value.spineWidth) || 0;
+    : tableRule
+      ? convertSpineRuleValue(tableRule.spineWidth, pageRules?.unit ?? unit, unit)
+      : Number(value.spineWidth) || 0;
   return {
     label: String(value.label ?? '').trim(),
     id: String(value.label ?? '').trim(),
-    unit: value.unit === 'mm' || value.unit === 'cm' ? value.unit : 'in',
+    unit,
     pageCount,
     pageCountOptions: pageCountOptions.length ? pageCountOptions : [pageCount],
     sideWidth: Number(value.sideWidth) || 0,
     sideHeight: Number(value.sideHeight) || 0,
-    bleed: Number(value.bleed) || 0,
+    bleed: normalizeProductBleed(value.bleed, bleedMode),
     spineWidthMode,
     spineWidth,
     minSpineWidth: usesFormula ? 0 : Number(value.minSpineWidth) || 0,
     maxSpineWidth: usesFormula ? 0 : Number(value.maxSpineWidth) || 0,
-    spineBleed: usesFormula ? 0 : Number(value.spineBleed) || 0,
+    spineBleed: tableRule
+      ? convertSpineRuleValue(tableRule.spineBleed, pageRules?.unit ?? unit, unit)
+      : Number(value.spineBleed) || 0,
     paperThickness: usesFormula ? 0 : Number(value.paperThickness) || 0
   };
 }
@@ -138,6 +194,19 @@ const unitToInches: Record<ProductCommonSpecValue['unit'], number> = {
   cm: 1 / 2.54,
   mm: 1 / 25.4
 };
+
+function matchedSpineWidthPageRule(rules: SpineWidthPageRules | undefined, pageCount: number) {
+  if (!Array.isArray(rules?.items) || rules.items.length === 0) return undefined;
+  const ordered = rules.items.slice().sort((left, right) => left.pageCount - right.pageCount);
+  if (rules.matchStrategy === 'floor') return ordered.slice().reverse().find(item => item.pageCount <= pageCount);
+  if (rules.matchStrategy === 'ceil') return ordered.find(item => item.pageCount >= pageCount);
+  return ordered.find(item => item.pageCount === pageCount);
+}
+
+function convertSpineRuleValue(value: number, from: ProductCommonSpecValue['unit'], to: ProductCommonSpecValue['unit']) {
+  if (from === to) return value;
+  return value * unitToInches[from] / unitToInches[to];
+}
 
 const commonSpecDimensionFields = [
   'sideWidth',
@@ -164,7 +233,26 @@ function convertCommonSpecUnit(
     if (!Number.isFinite(numeric)) return;
     converted[field] = Number((numeric * factor).toFixed(4));
   });
+  if (typeof values.bleed === 'object' && values.bleed !== null) {
+    converted.bleed = Object.fromEntries(
+      Object.entries(values.bleed).map(([side, sideValue]) => [side, Number((Number(sideValue) * factor).toFixed(4))])
+    ) as ProductBleed;
+  }
   return converted;
+}
+
+function convertSpineWidthPageRulesUnit(value: SpineWidthPageRules, to: SpineWidthPageRules['unit']): SpineWidthPageRules {
+  if (value.unit === to) return { ...value, unit: to };
+  const factor = unitToInches[value.unit] / unitToInches[to];
+  return {
+    ...value,
+    unit: to,
+    items: value.items.map(item => ({
+      ...item,
+      spineWidth: Number((item.spineWidth * factor).toFixed(4)),
+      spineBleed: Number((item.spineBleed * factor).toFixed(4))
+    }))
+  };
 }
 
 function hasCommonSpecValue(values: Partial<ProductCommonSpecValue> | undefined): boolean {
@@ -179,6 +267,7 @@ function hasCommonSpecValue(values: Partial<ProductCommonSpecValue> | undefined)
 type AppLayoutProps = {
   activeModule: ModuleId;
   children: ReactNode;
+  account?: LocalUserProfile;
   editorMode?: boolean;
   shops: Shop[];
   products: ProductCategory[];
@@ -187,10 +276,13 @@ type AppLayoutProps = {
   selectedTemplateLibraryShopId: TemplateLibraryShopSelection;
   selectedInnerPagesShopId?: number;
   selectedInnerPagesProductId?: number;
+  selectedFontLayoutsShopId?: number;
+  selectedFontLayoutsProductId?: number;
   status: string;
   onModuleChange(moduleId: ModuleId): void;
   onSizeTemplatesShopChange(shopId: number): void;
   onInnerPagesSelection(shopId: number, productId: number): void;
+  onFontLayoutsSelection(shopId: number, productId: number): void;
   onTemplateLibrarySelection(productId: number, shopId: TemplateLibraryShopSelection): void;
   onClearTemplateLibraryContext(): void;
   onSaveProduct(productId: number | undefined, payload: ProductCategoryPayload): Promise<void>;
@@ -203,6 +295,7 @@ type AppLayoutProps = {
 export default function AppLayout({
   activeModule,
   children,
+  account,
   editorMode = false,
   shops,
   products,
@@ -211,10 +304,13 @@ export default function AppLayout({
   selectedTemplateLibraryShopId,
   selectedInnerPagesShopId,
   selectedInnerPagesProductId,
+  selectedFontLayoutsShopId,
+  selectedFontLayoutsProductId,
   status,
   onModuleChange,
   onSizeTemplatesShopChange,
   onInnerPagesSelection,
+  onFontLayoutsSelection,
   onTemplateLibrarySelection,
   onClearTemplateLibraryContext,
   onSaveProduct,
@@ -225,6 +321,7 @@ export default function AppLayout({
 }: AppLayoutProps) {
   const { message } = App.useApp();
   const [collapsed, setCollapsed] = useState(false);
+  const [weatherTone, setWeatherTone] = useState<WeatherTone>('neutral');
   const [openMenuKeys, setOpenMenuKeys] = useState<string[]>([]);
   const [productForm] = Form.useForm();
   const [productNames, setProductNames] = useState<string[]>([]);
@@ -234,13 +331,28 @@ export default function AppLayout({
   const productSubmittingRef = useRef(false);
   const commonSpecUnitsRef = useRef<Record<string, ProductCommonSpecValue['unit']>>({});
   const commonSpecValues = Form.useWatch('commonSpecValues', productForm) as Partial<ProductCommonSpecValue>[] | undefined;
+  const productBleedMode = (Form.useWatch('bleedMode', productForm) === 'double' ? 'double' : 'single') as 'single' | 'double';
+  const watchedDefaultPageCount = Form.useWatch('defaultPageCount', productForm);
+  const defaultPageCount = Number(watchedDefaultPageCount) > 0
+    ? Number(watchedDefaultPageCount)
+    : 50;
+  const watchedPageCountOptions = Form.useWatch('pageCountOptions', productForm);
+  const parsedPageCountOptions = (Array.isArray(watchedPageCountOptions) ? watchedPageCountOptions : [])
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const commonPageCountOptions = parsedPageCountOptions.length ? parsedPageCountOptions : [50, 100];
   const spineWidthFormula = Form.useWatch('spineWidthFormula', {
     form: productForm,
     preserve: true
   }) as SpineWidthFormula | undefined;
-  const hasPageCountSpineRule = commonSpecValues?.some((value) => value?.spineWidthMode === 'by_page_count') === true;
-  const productUsesSpineWidthFormula = Boolean(spineWidthFormula);
-  const showProductSpineWidthFormula = hasPageCountSpineRule && productUsesSpineWidthFormula;
+  const spineWidthPageRules = Form.useWatch('spineWidthPageRules', {
+    form: productForm,
+    preserve: true
+  }) as SpineWidthPageRules | undefined;
+  const spineWidthMode = (Form.useWatch('spineWidthMode', productForm) as ProductSpineWidthMode | undefined) ?? 'range';
+  const productUsesSpineWidthFormula = spineWidthMode === 'formula' && Boolean(spineWidthFormula);
+  const showProductSpineWidthFormula = spineWidthMode === 'formula';
+  const showProductSpineWidthPageRules = spineWidthMode === 'page_count_table';
   const activeModuleDefinition = getModuleDefinition(activeModule);
   const productActions: ProductMenuActions = useMemo(() => ({ onAdd: () => onOpenProductEditor(null), onEdit: onOpenProductEditor, onDelete: (product) => { void onDeleteProduct(product); } }), [onDeleteProduct, onOpenProductEditor]);
   const menuItems = useMemo(() => getModuleMenuItems(shops, products, productActions), [shops, products, productActions]);
@@ -250,11 +362,18 @@ export default function AppLayout({
     ? getSizeTemplateShopMenuKey(selectedSizeTemplatesShopId)
     : activeModule === 'inner-pages' && selectedInnerPagesShopId !== undefined && selectedInnerPagesProductId !== undefined
       ? getInnerPagesProductMenuKey(selectedInnerPagesShopId, selectedInnerPagesProductId)
+    : activeModule === 'font-layouts' && selectedFontLayoutsShopId !== undefined && selectedFontLayoutsProductId !== undefined
+      ? getFontLayoutsProductMenuKey(selectedFontLayoutsShopId, selectedFontLayoutsProductId)
     : activeModule;
   const breadcrumbItems = useMemo(
     () => activeModuleDefinition.breadcrumb.map((title) => ({ title })),
     [activeModuleDefinition]
   );
+  const accountName = account?.displayName?.trim() || '网页用户';
+  const accountInitials = accountName.slice(0, 2).toUpperCase();
+  const accountMenuItems = useMemo(() => [
+    { key: 'account', label: '账号设置' }
+  ], []);
 
   useEffect(() => {
     if (activeModule !== 'inner-pages' || collapsed) return;
@@ -270,6 +389,16 @@ export default function AppLayout({
     if (activeModule !== 'size-templates' || collapsed) return;
     setOpenMenuKeys((current) => current.includes('size-templates') ? current : [...current, 'size-templates']);
   }, [activeModule, collapsed]);
+
+  useEffect(() => {
+    if (activeModule !== 'font-layouts' || collapsed) return;
+    setOpenMenuKeys((current) => {
+      const next = current.includes('font-layouts') ? current : [...current, 'font-layouts'];
+      if (selectedFontLayoutsShopId === undefined) return next;
+      const shopKey = getFontLayoutsShopMenuKey(selectedFontLayoutsShopId);
+      return next.includes(shopKey) ? next : [...next, shopKey];
+    });
+  }, [activeModule, collapsed, selectedFontLayoutsShopId]);
 
   useEffect(() => {
     if (activeModule !== 'template-library' || collapsed) return;
@@ -288,12 +417,14 @@ export default function AppLayout({
     productForm.resetFields();
     commonSpecUnitsRef.current = {};
     const editorCommonSpecs = productEditor?.commonSpecValues ?? [];
-    const shouldUseSpineWidthFormula = Boolean(productEditor?.spineWidthFormula)
-      || editorCommonSpecs.some((value) => value.spineWidthMode === 'by_page_count');
+    const shouldUseSpineWidthFormula = productEditor?.spineWidthMode === 'formula' || Boolean(productEditor?.spineWidthFormula);
     setProductNames(productEditor?.productNames ?? []);
     setProductDraft('');
     setProductInputVisible(false);
     productForm.setFieldsValue({
+      bleedMode: productEditor?.commonSpecValues?.some((value) => typeof value.bleed === 'object') ? 'double' : 'single',
+      spineWidthMode: productEditor?.spineWidthMode ?? (productEditor?.spineWidthFormula ? 'formula' : 'range'),
+      useSafeDistance: productEditor?.useSafeDistance ?? true,
       backCoverSafeDistance: productEditor?.backCoverSafeDistance ?? emptySafeDistance(),
       coverSafeDistance: productEditor?.coverSafeDistance ?? emptySafeDistance(),
       spineSafeDistance: productEditor?.spineSafeDistance ?? emptySafeDistance()
@@ -304,6 +435,17 @@ export default function AppLayout({
         spineWidthFormula: productEditor?.spineWidthFormula ?? { ...defaultSpineWidthFormula }
       });
     }
+    const initialPageRules = productEditor?.spineWidthPageRules ?? { ...defaultSpineWidthPageRules, items: defaultSpineWidthPageRules.items.map(item => ({ ...item })) };
+    productForm.setFieldsValue({
+      spineWidthPageRules: { ...initialPageRules, matchStrategy: 'exact' }
+    });
+    const firstCommonSpec = productEditor?.commonSpecValues?.[0];
+    const initialPageCount = firstCommonSpec?.pageCount > 0 ? firstCommonSpec.pageCount : undefined;
+    const initialPageCountOptions = firstCommonSpec?.pageCountOptions?.length ? firstCommonSpec.pageCountOptions : undefined;
+    productForm.setFieldsValue({
+      ...(initialPageCount !== undefined ? { defaultPageCount: initialPageCount } : {}),
+      ...(initialPageCountOptions ? { pageCountOptions: initialPageCountOptions } : {})
+    });
     commonSpecUnitsRef.current = Object.fromEntries(
       (productEditor?.commonSpecValues ?? []).map((value, index) => [
         String(index),
@@ -312,6 +454,9 @@ export default function AppLayout({
     );
     if (productEditor) productForm.setFieldsValue({
       name: productEditor.name,
+      templateMarker: productEditor.templateMarker,
+      innerPageField: productEditor.innerPageField,
+      productIdentifiers: productEditor.productIdentifiers,
       description: productEditor.description,
       specifications: productEditor.specifications,
       specificationField: productEditor.specificationField,
@@ -319,7 +464,8 @@ export default function AppLayout({
         ...value,
         label: value.label || value.id,
         pageCount: value.pageCount > 0 ? value.pageCount : value.pageCountOptions[0] ?? 50,
-        spineWidthMode: value.spineWidthMode
+        spineWidthMode: value.spineWidthMode,
+        bleed: normalizeProductBleed(value.bleed, productEditor.commonSpecValues.some((item) => typeof item.bleed === 'object') ? 'double' : 'single')
       })),
       shopIds: productEditor.shopIds
     });
@@ -335,6 +481,49 @@ export default function AppLayout({
     setProductNames((current) => [...current, nextProduct]);
     setProductDraft('');
     setProductInputVisible(false);
+  }
+
+  function changeProductBleedMode(nextMode: 'single' | 'double') {
+    const current = productForm.getFieldValue('commonSpecValues');
+    if (Array.isArray(current)) {
+      productForm.setFieldValue(
+        'commonSpecValues',
+        current.map((value: Partial<ProductCommonSpecValue>) => ({
+          ...value,
+          bleed: normalizeProductBleed(value.bleed, nextMode),
+          ...(nextMode === 'double' ? {
+            spineWidth: 0,
+            minSpineWidth: 0,
+            maxSpineWidth: 0,
+            spineBleed: 0,
+            paperThickness: 0
+          } : {})
+        }))
+      );
+    }
+    productForm.setFieldValue('bleedMode', nextMode);
+  }
+
+  function changeSpineWidthMode(nextMode: ProductSpineWidthMode) {
+    productForm.setFieldValue('spineWidthMode', nextMode);
+    // Formula mode owns the final width calculation.  Any existing range-mode
+    // spine bleed is not meaningful there, so start the editable formula bleed
+    // field from the documented default of 0.
+    if (nextMode === 'formula') {
+      const current = productForm.getFieldValue('commonSpecValues');
+      if (Array.isArray(current)) {
+        productForm.setFieldValue('commonSpecValues', current.map((value: Partial<ProductCommonSpecValue>) => ({
+          ...value,
+          spineBleed: 0
+        })));
+      }
+    }
+    if (nextMode === 'formula' && !productForm.getFieldValue('spineWidthFormula')) {
+      productForm.setFieldValue('spineWidthFormula', { ...defaultSpineWidthFormula });
+    }
+    if (nextMode === 'page_count_table' && !productForm.getFieldValue('spineWidthPageRules')) {
+      productForm.setFieldValue('spineWidthPageRules', { ...defaultSpineWidthPageRules, items: defaultSpineWidthPageRules.items.map(item => ({ ...item })) });
+    }
   }
 
   return (
@@ -383,6 +572,12 @@ export default function AppLayout({
               onModuleChange('inner-pages');
               return;
             }
+            const fontLayoutsSelection = getFontLayoutsMenuSelection(key);
+            if (fontLayoutsSelection) {
+              onFontLayoutsSelection(fontLayoutsSelection.shopId, fontLayoutsSelection.productId);
+              onModuleChange('font-layouts');
+              return;
+            }
             const shopId = getSizeTemplateShopIdFromMenuKey(key);
             if (shopId !== undefined) {
               onClearTemplateLibraryContext();
@@ -399,16 +594,51 @@ export default function AppLayout({
       </Sider>
 
       <Layout className="app-main">
-        <Header className="app-content-header">
-          <Button
-            aria-label={collapsed ? '展开侧边导航' : '收起侧边导航'}
-            className="app-nav-toggle"
-            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            type="text"
-            onClick={() => setCollapsed((current) => !current)}
-          />
-          <Breadcrumb className="app-breadcrumb" items={breadcrumbItems} />
-          <Typography.Text className="app-module-title">{activeModuleDefinition.label}</Typography.Text>
+        <Header className={`app-content-header weather-tone-${weatherTone}`}>
+          <div className="app-header-background" aria-hidden="true" />
+          <Tooltip title={collapsed ? '展开侧边导航' : '收起侧边导航'}>
+            <Button
+              aria-label={collapsed ? '展开侧边导航' : '收起侧边导航'}
+              aria-pressed={collapsed}
+              className={`app-nav-toggle ${collapsed ? 'is-collapsed' : 'is-expanded'}`}
+              type="text"
+              onClick={() => setCollapsed((current) => !current)}
+            >
+              <span className="app-nav-toggle-icon" aria-hidden="true">
+                <LeftOutlined className="app-nav-toggle-icon-expanded" />
+                <RightOutlined className="app-nav-toggle-icon-collapsed" />
+              </span>
+            </Button>
+          </Tooltip>
+          <div className="app-breadcrumb-context">
+            <div className="app-breadcrumb-content">
+              <Breadcrumb aria-label="当前位置" className="app-breadcrumb" items={breadcrumbItems} />
+            </div>
+            <WeatherBreadcrumb onToneChange={setWeatherTone} />
+          </div>
+          <div className="app-header-actions">
+            <Dropdown
+              trigger={['click']}
+              menu={{ items: [{ key: 'empty', label: '暂无新通知', disabled: true }] }}
+            >
+              <Badge dot offset={[-3, 4]}>
+                <Button type="text" className="app-header-icon-button" aria-label="消息通知" icon={<BellOutlined />} />
+              </Badge>
+            </Dropdown>
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: accountMenuItems,
+                onClick: ({ key }) => { if (key === 'account') onModuleChange('account'); }
+              }}
+            >
+              <Button type="text" className="app-user-button" aria-label="打开用户菜单">
+                <Avatar size={30} className="app-user-avatar">{accountInitials}</Avatar>
+                <span className="app-user-name">{accountName}</span>
+                <DownOutlined className="app-user-chevron" aria-hidden="true" />
+              </Button>
+            </Dropdown>
+          </div>
         </Header>
 
         <Content className={editorMode ? 'workspace workspace-editor' : 'workspace'}>
@@ -440,21 +670,37 @@ export default function AppLayout({
           productSubmittingRef.current = true;
           setProductSubmitting(true);
           try {
-            const submittedSpineWidthFormula = normalizedSpineWidthFormula(values.spineWidthFormula);
+            const submittedSpineWidthMode: ProductSpineWidthMode = values.spineWidthMode === 'formula' || values.spineWidthMode === 'page_count_table' ? values.spineWidthMode : 'range';
+            const submittedSpineWidthFormulaBase = submittedSpineWidthMode === 'formula' ? normalizedSpineWidthFormula(values.spineWidthFormula) : undefined;
+            const submittedSpineWidthPageRules = submittedSpineWidthMode === 'page_count_table' ? normalizedSpineWidthPageRules(values.spineWidthPageRules) : undefined;
+            const normalizedSpecs = Array.isArray(values.commonSpecValues)
+              ? values.commonSpecValues
+                .map((value: Partial<ProductCommonSpecValue>) => normalizedCommonSpecValue({
+                  ...value,
+                  pageCount: Number(values.defaultPageCount) > 0 ? Number(values.defaultPageCount) : 50,
+                  pageCountOptions: Array.isArray(values.pageCountOptions) ? values.pageCountOptions : [50, 100],
+                }, submittedSpineWidthFormulaBase, values.bleedMode === 'double' ? 'double' : 'single', submittedSpineWidthMode, submittedSpineWidthPageRules))
+                .filter((value) => value.id || value.label)
+              : [];
+            const submittedSpineWidthFormula = submittedSpineWidthFormulaBase
+              ? { ...submittedSpineWidthFormulaBase, spineBleed: Number(normalizedSpecs[0]?.spineBleed) || submittedSpineWidthFormulaBase.spineBleed }
+              : undefined;
             await onSaveProduct(productEditor?.id, {
               name: String(values.name ?? '').trim(),
+              templateMarker: String(values.templateMarker ?? '').trim(),
+              innerPageField: String(values.innerPageField ?? '').trim(),
+              productIdentifiers: Array.isArray(values.productIdentifiers) ? values.productIdentifiers.map(String).map((item) => item.trim()).filter(Boolean) : [],
+              useSafeDistance: values.useSafeDistance !== false,
               description: String(values.description ?? ''),
               productNames,
               specifications: Array.isArray(values.specifications)
                 ? values.specifications.map(String).map((item) => item.trim()).filter(Boolean)
                 : [],
               specificationField: String(values.specificationField ?? '').trim(),
-              commonSpecValues: Array.isArray(values.commonSpecValues)
-                ? values.commonSpecValues
-                  .map((value: Partial<ProductCommonSpecValue>) => normalizedCommonSpecValue(value, submittedSpineWidthFormula))
-                  .filter((value) => value.id || value.label)
-                : [],
+              commonSpecValues: normalizedSpecs,
+              spineWidthMode: submittedSpineWidthMode,
               ...(submittedSpineWidthFormula ? { spineWidthFormula: submittedSpineWidthFormula } : {}),
+              ...(submittedSpineWidthPageRules ? { spineWidthPageRules: submittedSpineWidthPageRules } : {}),
               backCoverSafeDistance: normalizedSafeDistance(values.backCoverSafeDistance),
               coverSafeDistance: normalizedSafeDistance(values.coverSafeDistance),
               spineSafeDistance: normalizedSafeDistance(values.spineSafeDistance),
@@ -470,6 +716,14 @@ export default function AppLayout({
           }
         }}>
           <Form.Item name="name" label="产品分类名称" rules={[{ required: true, whitespace: true, message: '请输入产品分类名称' }]}><Input placeholder="例如：婚礼签到册" /></Form.Item>
+          <Form.Item name="shopIds" label="关联店铺"><Select mode="multiple" options={shops.map((shop) => ({ value: shop.id, label: shop.shopName || shop.shop || '未命名店铺' }))} placeholder="选择关联店铺" /></Form.Item>
+          <Form.Item name="specificationField" label="规格匹配字段" extra="此产品在购买页面选择规则字段，没有规格不填">
+            <Input placeholder="商品规格字段" />
+          </Form.Item>
+          <Form.Item name="templateMarker" label="模板标识" extra="此产品在购买页面选择模板的字段"><Input placeholder="请输入模板标识（选填）" /></Form.Item>
+          <Form.Item name="innerPageField" label="内页字段" extra="有内页的商品请输入商品在购买页面的内页字段"><Input placeholder="请输入内页字段（选填）" /></Form.Item>
+          <Form.Item name="productIdentifiers" label="产品标识"><Select mode="tags" tokenSeparators={[',', '，']} placeholder="输入产品标识后按回车添加" /></Form.Item>
+          <Form.Item name="useSafeDistance" label="启用安全距离" valuePropName="checked" extra="开启后，编辑区会显示红色安全距离警示框；关闭后不渲染安全距离，也不会在保存时检测。"><Switch /></Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item label="商品名称" extra="输入商品名称后按回车或点击加号；点击标签内减号可删除。">
             <div className="shop-product-editor">
@@ -491,6 +745,65 @@ export default function AppLayout({
           <Form.Item name="specifications" label="商品规格">
             <Select mode="tags" tokenSeparators={[',', '，']} placeholder="输入规格后按回车，例如 9×6" />
           </Form.Item>
+          <Form.Item name="bleedMode" label="出血控制" extra="单排使用数值出血；双排使用接口返回的四边 bleed 对象">
+            <Segmented disabled={Boolean(productEditor)} block options={[{ value: 'single', label: '单排' }, { value: 'double', label: '双排' }]} onChange={(value) => changeProductBleedMode(value === 'double' ? 'double' : 'single')} />
+          </Form.Item>
+          <Form.Item name="spineWidthMode" label="背脊宽依据" extra={productEditor ? '编辑产品时不可修改背脊宽依据' : '选择依据后填写对应参数'}>
+            <Select
+              disabled={Boolean(productEditor)}
+              options={[
+                { value: 'range', label: '固定范围' },
+                { value: 'formula', label: '产品公式' },
+                { value: 'page_count_table', label: '按页数分段' },
+              ]}
+              onChange={(value: ProductSpineWidthMode) => changeSpineWidthMode(value)}
+            />
+          </Form.Item>
+          <Form.Item name="defaultPageCount" label="默认页数"><InputNumber min={1} precision={0} placeholder="请输入默认页数" /></Form.Item>
+          <Form.Item name="pageCountOptions" label="页数选项"><Select mode="tags" tokenSeparators={[',', '，']} placeholder="输入后按回车添加" /></Form.Item>
+          {showProductSpineWidthFormula && productUsesSpineWidthFormula ? (
+            <div className="product-spine-width-formula-editor">
+              <Typography.Title level={5}>产品公式</Typography.Title>
+              <Typography.Text type="secondary">最终背脊宽会根据默认页数实时计算。</Typography.Text>
+              <div className="product-common-spec-grid">
+                <Form.Item name={['spineWidthFormula', 'unit']} label="公式单位"><Select options={[{ value: 'cm', label: 'cm' }, { value: 'mm', label: 'mm' }, { value: 'in', label: 'in' }]} /></Form.Item>
+                <Form.Item name={['spineWidthFormula', 'pageCountCoefficient']} label="页数系数"><InputNumber min={0} /></Form.Item>
+                <Form.Item name={['spineWidthFormula', 'pageCountThickness']} label="每页厚度"><InputNumber min={0} /></Form.Item>
+                <Form.Item name={['spineWidthFormula', 'baseWidth']} label="基础宽度"><InputNumber min={0} /></Form.Item>
+                <Form.Item name={['spineWidthFormula', 'additionalWidth']} label="附加宽度"><InputNumber min={0} /></Form.Item>
+              </div>
+            </div>
+          ) : null}
+          {showProductSpineWidthPageRules ? (
+            <div className="product-spine-width-formula-editor">
+              <Typography.Title level={5}>按页数分段规则</Typography.Title>
+              <Typography.Text type="secondary">根据页数匹配对应的背脊宽和背脊出血。</Typography.Text>
+              <div className="product-common-spec-grid">
+                <Form.Item name={['spineWidthPageRules', 'unit']} label="规则单位"><Select options={[{ value: 'cm', label: 'cm' }, { value: 'mm', label: 'mm' }, { value: 'in', label: 'in' }]} onChange={(nextUnit: SpineWidthPageRules['unit']) => {
+                  const current = productForm.getFieldValue('spineWidthPageRules') as SpineWidthPageRules | undefined;
+                  if (current) productForm.setFieldValue('spineWidthPageRules', convertSpineWidthPageRulesUnit(current, nextUnit));
+                }} /></Form.Item>
+                <Form.Item name={['spineWidthPageRules', 'matchStrategy']} label="匹配方式"><Select disabled defaultValue="exact" options={[{ value: 'exact', label: '精确匹配' }]} /></Form.Item>
+              </div>
+              <Form.List name={['spineWidthPageRules', 'items']}>
+                {(fields, { add, remove }) => (
+                  <div className="product-common-spec-editor">
+                    {fields.map(field => (
+                      <div className="product-common-spec-row" key={field.key}>
+                        <div className="product-common-spec-grid">
+                          <Form.Item name={[field.name, 'pageCount']} label="页数"><InputNumber min={1} precision={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'spineWidth']} label="背脊宽"><InputNumber min={0} /></Form.Item>
+                          <Form.Item name={[field.name, 'spineBleed']} label="背脊出血"><InputNumber min={0} /></Form.Item>
+                          <Button type="text" danger icon={<DeleteOutlined />} aria-label="删除页数规则" onClick={() => remove(field.name)} />
+                        </div>
+                      </div>
+                    ))}
+                    <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ pageCount: 50, spineWidth: 0, spineBleed: 0 })}>添加页数规则</Button>
+                  </div>
+                )}
+              </Form.List>
+            </div>
+          ) : null}
           <Form.Item label="常用规格值">
             <Form.List name="commonSpecValues">
               {(fields, { add, remove }) => (
@@ -499,9 +812,21 @@ export default function AppLayout({
                     const rowKey = String(field.key);
                     const rowIndex = Number(field.name);
                     const rowValue = commonSpecValues?.[rowIndex] ?? {};
-                    const rowSpineMode = rowValue.spineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed';
-                    const finalSpineWidth = rowSpineMode === 'by_page_count'
-                      ? resolveImageMapSpineWidth({ ...rowValue, spineWidthFormula })
+                    const finalSpineWidth = spineWidthMode === 'formula'
+                      ? resolveImageMapSpineWidth({
+                        ...rowValue,
+                        bleed: typeof rowValue.bleed === 'number' ? rowValue.bleed : Number(rowValue.bleed?.left ?? rowValue.bleed?.right ?? 0),
+                        pageCount: defaultPageCount,
+                        pageCountOptions: commonPageCountOptions,
+                        spineWidthMode: 'by_page_count',
+                        spineWidthFormula,
+                      })
+                      : spineWidthMode === 'page_count_table'
+                        ? (() => {
+                          const rule = matchedSpineWidthPageRule(spineWidthPageRules, defaultPageCount);
+                          const rowUnit = rowValue.unit === 'mm' || rowValue.unit === 'cm' ? rowValue.unit : 'in';
+                          return rule ? convertSpineRuleValue(rule.spineWidth, spineWidthPageRules?.unit ?? rowUnit, rowUnit) : Number(rowValue.spineWidth) || 0;
+                        })()
                       : Number(rowValue.spineWidth) || 0;
                     if (!commonSpecUnitsRef.current[rowKey]) {
                       const rowValue = productForm.getFieldValue(['commonSpecValues', field.name]) as Partial<ProductCommonSpecValue> | undefined;
@@ -532,20 +857,28 @@ export default function AppLayout({
                             commonSpecUnitsRef.current[rowKey] = nextUnit;
                             productForm.setFieldValue(['commonSpecValues', field.name], convertCommonSpecUnit(current ?? {}, previousUnit, nextUnit));
                           }} /></Form.Item>
-                          <Form.Item name={[field.name, 'pageCount']} label="页数"><InputNumber min={0} precision={0} /></Form.Item>
-                          <Form.Item name={[field.name, 'pageCountOptions']} label="页数选项"><Select mode="tags" tokenSeparators={[',', '，']} /></Form.Item>
                           <Form.Item name={[field.name, 'sideWidth']} label="单面宽"><InputNumber min={0} /></Form.Item>
                           <Form.Item name={[field.name, 'sideHeight']} label="单面高"><InputNumber min={0} /></Form.Item>
-                          <Form.Item name={[field.name, 'bleed']} label="出血"><InputNumber min={0} /></Form.Item>
-                          <Form.Item name={[field.name, 'spineWidthMode']} label="背脊规则"><Select options={[{ value: 'fixed', label: '固定' }, { value: 'by_page_count', label: '按页数' }]} onChange={(mode) => {
-                            if (mode !== 'by_page_count') return;
-                            productForm.setFieldsValue({
-                              spineWidthFormula: productForm.getFieldValue('spineWidthFormula') ?? { ...defaultSpineWidthFormula },
-                            });
-                          }} /></Form.Item>
-                          {rowSpineMode === 'by_page_count' && productUsesSpineWidthFormula ? (
-                            <Form.Item label="最终背脊宽">
-                              <InputNumber value={finalSpineWidth} addonAfter={rowValue.unit || 'in'} precision={4} disabled style={{ width: '100%' }} />
+                          {productBleedMode === 'single' ? (
+                            <Form.Item name={[field.name, 'bleed']} label="出血"><InputNumber min={0} /></Form.Item>
+                          ) : (
+                            <>
+                              <Form.Item name={[field.name, 'bleed', 'top']} label="出血上"><InputNumber min={0} /></Form.Item>
+                              <Form.Item name={[field.name, 'bleed', 'bottom']} label="出血下"><InputNumber min={0} /></Form.Item>
+                              <Form.Item name={[field.name, 'bleed', 'left']} label="出血左"><InputNumber min={0} /></Form.Item>
+                              <Form.Item name={[field.name, 'bleed', 'right']} label="出血右"><InputNumber min={0} /></Form.Item>
+                            </>
+                          )}
+                          {spineWidthMode === 'formula' ? (
+                            <>
+                              <Form.Item label="最终背脊宽">
+                                <InputNumber value={finalSpineWidth} addonAfter={rowValue.unit || 'in'} precision={4} disabled style={{ width: '100%' }} />
+                              </Form.Item>
+                              <Form.Item name={[field.name, 'spineBleed']} label="背脊出血"><InputNumber min={0} /></Form.Item>
+                            </>
+                          ) : spineWidthMode === 'page_count_table' ? (
+                            <Form.Item label="背脊宽">
+                              <InputNumber value={Number(rowValue.spineWidth) || 0} addonAfter={rowValue.unit || 'in'} precision={4} disabled style={{ width: '100%' }} />
                             </Form.Item>
                           ) : (
                             <>
@@ -555,36 +888,24 @@ export default function AppLayout({
                               <Form.Item name={[field.name, 'spineBleed']} label="背脊出血"><InputNumber min={0} /></Form.Item>
                             </>
                           )}
-                          <Form.Item noStyle shouldUpdate={(previous, current) => previous.commonSpecValues?.[field.name]?.spineWidthMode !== current.commonSpecValues?.[field.name]?.spineWidthMode}>
-                            {() => productForm.getFieldValue(['commonSpecValues', field.name, 'spineWidthMode']) === 'by_page_count' && productUsesSpineWidthFormula ? null : <Form.Item name={[field.name, 'paperThickness']} label="纸张厚度(mm)"><InputNumber min={0} /></Form.Item>}
-                          </Form.Item>
                         </div>
                       </div>
                     );
                   })}
                   <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({
-                    ...defaultCommonSpecValue
+                    ...defaultCommonSpecValue,
+                    ...(spineWidthMode === 'formula' ? {
+                      spineWidth: 0,
+                      minSpineWidth: 0,
+                      maxSpineWidth: 0,
+                      spineBleed: 0,
+                      paperThickness: 0
+                    } : {}),
+                    bleed: productBleedMode === 'double' ? emptyDoubleBleed(defaultCommonSpecValue.bleed as number) : defaultCommonSpecValue.bleed
                   })}>添加常用规格</Button>
                 </div>
               )}
             </Form.List>
-          </Form.Item>
-          {showProductSpineWidthFormula && productUsesSpineWidthFormula ? (
-            <div className="product-spine-width-formula-editor">
-              <Typography.Title level={5}>按页数背脊宽公式</Typography.Title>
-              <Typography.Text type="secondary">背脊宽 = 页数 × 系数 × 每页厚度 + 基础宽度 + 附加宽度；公式结果会自动换算到规格单位。</Typography.Text>
-              <div className="product-common-spec-grid">
-                <Form.Item name={['spineWidthFormula', 'unit']} label="公式单位"><Select options={[{ value: 'cm', label: 'cm' }, { value: 'mm', label: 'mm' }, { value: 'in', label: 'in' }]} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'pageCountCoefficient']} label="页数系数"><InputNumber min={0} precision={4} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'pageCountThickness']} label="每页厚度"><InputNumber min={0} precision={4} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'baseWidth']} label="基础宽度"><InputNumber min={0} precision={4} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'additionalWidth']} label="附加宽度"><InputNumber min={0} precision={4} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'spineBleed']} label="背脊出血"><InputNumber value={0} disabled /></Form.Item>
-              </div>
-            </div>
-          ) : null}
-          <Form.Item name="specificationField" label="规格匹配字段">
-            <Input placeholder="商品规格字段" />
           </Form.Item>
           <div className="product-safe-distance-editor">
             <Typography.Title level={5}>安全距离（mm）</Typography.Title>
@@ -592,7 +913,6 @@ export default function AppLayout({
             <SafeDistanceFormFields label="封面安全距离" name="coverSafeDistance" />
             <SafeDistanceFormFields label="背脊安全距离" name="spineSafeDistance" />
           </div>
-          <Form.Item name="shopIds" label="关联店铺"><Select mode="multiple" options={shops.map((shop) => ({ value: shop.id, label: shop.shopName || shop.shop || '未命名店铺' }))} placeholder="选择关联店铺" /></Form.Item>
         </Form>
         </Spin>
       </Modal>

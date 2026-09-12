@@ -12,7 +12,7 @@ import type {
 } from '@shared/domain';
 import type { TemplateLibraryShopSelection } from './moduleRegistry';
 
-export type ModuleId = 'orders' | 'shops' | 'inner-pages' | 'size-templates' | 'template-library' | 'text-generation-rules' | 'fonts' | 'editor' | 'image-map-test' | 'exports' | 'account';
+export type ModuleId = 'orders' | 'shops' | 'inner-pages' | 'size-templates' | 'template-library' | 'text-generation-rules' | 'font-layouts' | 'fonts' | 'editor' | 'image-map-test' | 'ui-prototype' | 'exports' | 'account';
 
 export type ModulePageProps = {
   setStatus(message: string): void;

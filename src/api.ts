@@ -29,7 +29,10 @@ import type {
   OrderStatusDefinition,
   ProductCategory,
   ProductCategoryPayload,
+  ProductBleed,
   ProductCommonSpecValue,
+  ProductSpineWidthMode,
+  SpineWidthPageRules,
   SpineWidthFormula,
   ProductShop,
   Shop,
@@ -97,6 +100,17 @@ function personalizationValue(value: unknown): string {
 
 function firstValue(record: Record<string, unknown>, ...keys: string[]): unknown {
   return keys.map((key) => record[key]).find((value) => value !== undefined && value !== null);
+}
+
+function booleanValue(value: unknown, fallback = false): boolean {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  }
+  if (typeof value === 'number') return value !== 0;
+  return Boolean(value);
 }
 
 function apiFileUrl(value: unknown): string {
@@ -335,7 +349,7 @@ function normalizeOrderList(value: unknown): OrderListResult {
   return {
     items: normalizeOrders(record.items ?? []),
     total: numberValue(record.total),
-    limit: numberValue(record.limit) || 20,
+    limit: numberValue(record.limit) || 10,
     pages: numberValue(record.pages) || 1,
     totalPages: numberValue(record.total_pages)
   };
@@ -355,6 +369,7 @@ function toShop(value: unknown): Shop {
     id: numberValue(record.id),
     shop: textValue(record.shop),
     shopName: textValue(record.shop_name),
+    settlementCurrency: textValue(record.settlement_currency ?? record.settlementCurrency) || 'USD',
     wecomRobotWebhookUrl: textValue(record.wecom_robot_webhook_url ?? record.wecomRobotWebhookUrl),
     products,
     productCount: numberValue(record.product_count),
@@ -408,6 +423,19 @@ function toProductCommonSpecValue(value: unknown): ProductCommonSpecValue {
   const rawUnit = textValue(record.unit ?? record.size_unit).toLowerCase();
   const unit = rawUnit === 'mm' || rawUnit === 'cm' ? rawUnit : 'in';
   const rawSpineWidthMode = textValue(record.spineWidthMode ?? record.spine_width_mode);
+  let rawBleed = record.bleed;
+  if (typeof rawBleed === 'string' && rawBleed.trim()) {
+    try { rawBleed = JSON.parse(rawBleed) as unknown; } catch { /* Keep legacy numeric strings compatible. */ }
+  }
+  const bleedRecord = recordValue(rawBleed);
+  const bleed = Object.keys(bleedRecord).length > 0
+    ? {
+      top: numberValue(bleedRecord.top),
+      right: numberValue(bleedRecord.right),
+      bottom: numberValue(bleedRecord.bottom),
+      left: numberValue(bleedRecord.left)
+    } satisfies ProductBleed
+    : numberValue(rawBleed);
   return {
     id: textValue(record.id),
     label: textValue(record.label),
@@ -416,7 +444,7 @@ function toProductCommonSpecValue(value: unknown): ProductCommonSpecValue {
     pageCountOptions: pageCountOptions.length ? pageCountOptions : [pageCount],
     sideWidth: numberValue(record.sideWidth ?? record.side_width ?? record.single_side_width),
     sideHeight: numberValue(record.sideHeight ?? record.side_height ?? record.single_side_height),
-    bleed: numberValue(record.bleed),
+    bleed,
     spineWidthMode: rawSpineWidthMode === 'by_page_count' ? 'by_page_count' : 'fixed',
     spineWidth: numberValue(record.spineWidth ?? record.spine_width),
     minSpineWidth: numberValue(record.minSpineWidth ?? record.min_spine_width),
@@ -441,6 +469,31 @@ function toSpineWidthFormula(value: unknown): SpineWidthFormula | undefined {
     baseWidth: numberValue(record.base_width ?? record.baseWidth),
     additionalWidth: numberValue(record.additional_width ?? record.additionalWidth),
     spineBleed: numberValue(record.spine_bleed ?? record.spineBleed),
+  };
+}
+
+function toSpineWidthPageRules(value: unknown): SpineWidthPageRules | undefined {
+  let raw = value;
+  if (typeof raw === 'string' && raw.trim()) {
+    try { raw = JSON.parse(raw) as unknown; } catch { raw = undefined; }
+  }
+  const record = recordValue(raw);
+  if (Object.keys(record).length === 0) return undefined;
+  const unitValue = textValue(record.unit).toLowerCase();
+  const matchStrategyValue = textValue(record.match_strategy ?? record.matchStrategy).toLowerCase();
+  const rawItems = Array.isArray(record.items) ? record.items : [];
+  const items = rawItems.map(item => {
+    const itemRecord = recordValue(item);
+    return {
+      pageCount: numberValue(itemRecord.page_count ?? itemRecord.pageCount),
+      spineWidth: numberValue(itemRecord.spine_width ?? itemRecord.spineWidth),
+      spineBleed: numberValue(itemRecord.spine_bleed ?? itemRecord.spineBleed)
+    };
+  }).filter(item => item.pageCount > 0);
+  return {
+    unit: unitValue === 'mm' || unitValue === 'in' ? unitValue : 'cm',
+    matchStrategy: matchStrategyValue === 'floor' || matchStrategyValue === 'ceil' ? matchStrategyValue : 'exact',
+    items
   };
 }
 
@@ -474,18 +527,41 @@ function toProductCategory(value: unknown): ProductCategory {
   }
   const rawTemplateIds = record.size_template_ids ?? record.sizeTemplateIds;
   const rawCommonSpecValues = record.common_spec_values ?? record['常用规格值'] ?? record.commonSpecValues;
+  const commonSpecValues = normalizeProductCommonSpecValues(rawCommonSpecValues);
+  const rawSpineWidthBasis = textValue(
+    record.spine_width_basis
+      ?? record.spineWidthBasis
+      ?? record.spine_width_mode
+      ?? record.spineWidthMode
+  ).toLowerCase();
+  const spineWidthMode: ProductSpineWidthMode = rawSpineWidthBasis === 'formula' || rawSpineWidthBasis === 'page_count_table'
+    ? rawSpineWidthBasis
+    : rawSpineWidthBasis === 'range' || rawSpineWidthBasis === 'fixed'
+      ? 'range'
+      : ((record.spine_width_formula ?? record.spineWidthFormula)
+        ? 'formula'
+        : commonSpecValues.some(value => value.spineWidthMode === 'by_page_count') ? 'formula' : 'range');
+  const spineWidthFormula = toSpineWidthFormula(record.spine_width_formula ?? record.spineWidthFormula);
+  const spineWidthPageRules = toSpineWidthPageRules(record.spine_width_page_rules ?? record.spineWidthPageRules);
   return {
     id: numberValue(record.id),
     name: textValue(record.name).trim(),
+    templateMarker: textValue(record.template_marker ?? record.templateMarker).trim(),
+    innerPageField: textValue(record.inner_page_field ?? record.innerPageField).trim(),
+    productIdentifiers: (() => {
+      const raw = record.product_identifiers ?? record.productIdentifiers;
+      return Array.isArray(raw) ? raw.map(textValue).map((item) => item.trim()).filter(Boolean) : [];
+    })(),
+    useSafeDistance: booleanValue(record.use_safe_distance ?? record.useSafeDistance, true),
     description: textValue(record.description),
     enabled: record.enabled === undefined ? true : record.enabled !== false && numberValue(record.enabled) !== 0,
     productNames,
     specifications,
     specificationField: textValue(record.specification_field ?? record.specificationField),
-    commonSpecValues: normalizeProductCommonSpecValues(rawCommonSpecValues),
-    ...(toSpineWidthFormula(record.spine_width_formula ?? record.spineWidthFormula)
-      ? { spineWidthFormula: toSpineWidthFormula(record.spine_width_formula ?? record.spineWidthFormula) }
-      : {}),
+    commonSpecValues,
+    spineWidthMode,
+    ...(spineWidthFormula ? { spineWidthFormula } : {}),
+    ...(spineWidthPageRules ? { spineWidthPageRules } : {}),
     ...normalizeProductSafeDistances(record),
     shopIds,
     shops: rawShops.map(toProductShop).filter((shop) => shop.id > 0),
@@ -902,6 +978,14 @@ function normalizeCatalogSizeTemplate(value: unknown): CatalogSizeTemplate {
   const info = Array.isArray(record.size_template_info)
     ? record.size_template_info.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
     : [];
+  // The size-template API uses named spine-width strategies, while the
+  // editor's legacy state still stores this field as a 0/1 flag. Normalize
+  // both response formats into the editor representation here.
+  const rawSpineWidthBasis = record.spine_width_basis ?? record.spineWidthBasis;
+  const spineWidthBasis = rawSpineWidthBasis === 'formula' || rawSpineWidthBasis === 'page_count_table'
+    ? rawSpineWidthBasis
+    : (rawSpineWidthBasis === '1' || numberValue(rawSpineWidthBasis) === 1) ? 'page_count_table'
+    : 'range';
   return {
     id: numberValue(record.id),
     ...(numberValue(record.product_id ?? record.productId) > 0 ? { productId: numberValue(record.product_id ?? record.productId) } : {}),
@@ -919,7 +1003,7 @@ function normalizeCatalogSizeTemplate(value: unknown): CatalogSizeTemplate {
     minSpineWidth: numberValue(record.min_spine_width ?? record.minSpineWidth),
     maxSpineWidth: numberValue(record.max_spine_width ?? record.maxSpineWidth),
     paperThicknessMm: numberValue(record.paper_thickness_mm ?? record.paperThicknessMm),
-    spineWidthBasis: numberValue(record.spine_width_basis ?? record.spineWidthBasis) === 1 ? 1 : 0,
+    spineWidthBasis,
     ...normalizeProductSafeDistances(record),
     selectedSizeOptionId: textValue(record.selected_size_option_id ?? record.selectedSizeOptionId).trim()
       || normalizeCatalogSizeOption(selectedOptionId).id
@@ -986,6 +1070,8 @@ function catalogSizeTemplatePayload(payload: CatalogSizeTemplatePayload): Record
     min_spine_width: payload.minSpineWidth,
     max_spine_width: payload.maxSpineWidth,
     paper_thickness_mm: payload.paperThicknessMm,
+    // The API expects a literal strategy name, not the editor's legacy 0/1
+    // flag. A value of 1 historically meant page-count based spine width.
     spine_width_basis: payload.spineWidthBasis,
     back_cover_safe_distance_json: payload.backCoverSafeDistance,
     cover_safe_distance_json: payload.coverSafeDistance,
@@ -1171,18 +1257,32 @@ export const browserAlbumApi = {
       url: '/products',
       data: {
         name: payload.name,
+        template_marker: payload.templateMarker ?? '',
+        inner_page_field: payload.innerPageField ?? '',
+        product_identifiers: payload.productIdentifiers ?? [],
+        use_safe_distance: payload.useSafeDistance ?? true,
         description: payload.description ?? '',
         product_names: payload.productNames,
         specifications: payload.specifications,
         specification_field: payload.specificationField,
         common_spec_values: payload.commonSpecValues ?? [],
-        ...(payload.spineWidthFormula ? { spine_width_formula: {
+        spine_width_mode: payload.spineWidthMode,
+        spine_width_formula: payload.spineWidthMode === 'formula' && payload.spineWidthFormula ? {
           unit: payload.spineWidthFormula.unit,
           page_count_coefficient: payload.spineWidthFormula.pageCountCoefficient,
           page_count_thickness: payload.spineWidthFormula.pageCountThickness,
           base_width: payload.spineWidthFormula.baseWidth,
           additional_width: payload.spineWidthFormula.additionalWidth,
           spine_bleed: payload.spineWidthFormula.spineBleed,
+        } : null,
+        ...(payload.spineWidthPageRules ? { spine_width_page_rules: {
+          unit: payload.spineWidthPageRules.unit,
+          match_strategy: payload.spineWidthPageRules.matchStrategy,
+          items: payload.spineWidthPageRules.items.map(item => ({
+            page_count: item.pageCount,
+            spine_width: item.spineWidth,
+            spine_bleed: item.spineBleed
+          }))
         } } : {}),
         back_cover_safe_distance_json: payload.backCoverSafeDistance,
         cover_safe_distance_json: payload.coverSafeDistance,
@@ -1196,19 +1296,35 @@ export const browserAlbumApi = {
       url: `/products/${productId}`,
       data: {
         ...(payload.name !== undefined ? { name: payload.name } : {}),
+        ...(payload.templateMarker !== undefined ? { template_marker: payload.templateMarker.trim() || null } : {}),
+        ...(payload.innerPageField !== undefined ? { inner_page_field: payload.innerPageField.trim() || null } : {}),
+        ...(payload.productIdentifiers !== undefined ? { product_identifiers: payload.productIdentifiers } : {}),
+        ...(payload.useSafeDistance !== undefined ? { use_safe_distance: payload.useSafeDistance } : {}),
         ...(payload.description !== undefined ? { description: payload.description } : {}),
         ...(payload.productNames !== undefined ? { product_names: payload.productNames } : {}),
         ...(payload.specifications !== undefined ? { specifications: payload.specifications } : {}),
-        ...(payload.specificationField !== undefined ? { specification_field: payload.specificationField } : {}),
+        // Send null when the field is cleared so PATCH explicitly removes the
+        // previous value instead of allowing the backend to ignore an empty string.
+        ...(payload.specificationField !== undefined ? { specification_field: payload.specificationField.trim() || null } : {}),
         ...(payload.commonSpecValues !== undefined ? { common_spec_values: payload.commonSpecValues } : {}),
-        ...(payload.spineWidthFormula !== undefined ? { spine_width_formula: {
+        ...(payload.spineWidthMode !== undefined ? { spine_width_mode: payload.spineWidthMode } : {}),
+        ...(payload.spineWidthMode !== undefined ? { spine_width_formula: payload.spineWidthMode === 'formula' && payload.spineWidthFormula ? {
           unit: payload.spineWidthFormula.unit,
           page_count_coefficient: payload.spineWidthFormula.pageCountCoefficient,
           page_count_thickness: payload.spineWidthFormula.pageCountThickness,
           base_width: payload.spineWidthFormula.baseWidth,
           additional_width: payload.spineWidthFormula.additionalWidth,
           spine_bleed: payload.spineWidthFormula.spineBleed,
-        } } : {}),
+        } : null } : {}),
+        ...(payload.spineWidthPageRules !== undefined ? { spine_width_page_rules: payload.spineWidthPageRules ? {
+          unit: payload.spineWidthPageRules.unit,
+          match_strategy: payload.spineWidthPageRules.matchStrategy,
+          items: payload.spineWidthPageRules.items.map(item => ({
+            page_count: item.pageCount,
+            spine_width: item.spineWidth,
+            spine_bleed: item.spineBleed
+          }))
+        } : null } : {}),
         ...(payload.backCoverSafeDistance !== undefined ? { back_cover_safe_distance_json: payload.backCoverSafeDistance } : {}),
         ...(payload.coverSafeDistance !== undefined ? { cover_safe_distance_json: payload.coverSafeDistance } : {}),
         ...(payload.spineSafeDistance !== undefined ? { spine_safe_distance_json: payload.spineSafeDistance } : {}),
@@ -1233,6 +1349,7 @@ export const browserAlbumApi = {
       data: {
         shop: payload.shop,
         shop_name: payload.shopName,
+        settlement_currency: payload.settlementCurrency,
         wecom_robot_webhook_url: payload.wecomRobotWebhookUrl ?? '',
         products: payload.products
       }
@@ -1248,6 +1365,7 @@ export const browserAlbumApi = {
       data: {
         shop: payload.shop,
         shop_name: payload.shopName,
+        settlement_currency: payload.settlementCurrency,
         wecom_robot_webhook_url: payload.wecomRobotWebhookUrl ?? '',
         products: payload.products
       }
@@ -1266,7 +1384,7 @@ export const browserAlbumApi = {
       method: 'GET',
       url: '/orders',
       params: {
-        limit: filters.limit ?? 20,
+        limit: filters.limit ?? 10,
         pages: filters.pages ?? 1,
         order_number: filters.orderNumber || undefined,
         shop: filters.shop || undefined,
@@ -1289,6 +1407,24 @@ export const browserAlbumApi = {
           template_json: templateJson
         }
       });
+    },
+    associateTemplate: async (
+      order: Pick<Order, 'id' | 'orderNo'>,
+      selection: { productId: number; sizeTemplateId: number; sizeOptionId: string }
+    ): Promise<Order> => {
+      const response = await apiRequest<unknown>({
+        method: 'PUT',
+        url: `/orders/${encodeURIComponent(order.id)}/template-association`,
+        data: {
+          order_number: order.orderNo,
+          product_id: selection.productId,
+          size_template_id: selection.sizeTemplateId,
+          size_option_id: selection.sizeOptionId
+        }
+      });
+      const payload = unwrapApiData(response);
+      const record = recordValue(payload);
+      return normalizeOrders({ items: [record.order ?? payload] })[0];
     },
     printImage: async (order: Pick<Order, 'id' | 'orderNo'>): Promise<string> => printImageValue(
       await apiRequest<unknown>({
@@ -1666,6 +1802,7 @@ export const browserAlbumApi = {
         ...(payload.productId !== undefined ? { product_id: payload.productId } : {}),
         name: payload.name,
         sort_key: payload.sortKey,
+        ...(payload.previewImage !== undefined ? { preview_image: payload.previewImage } : {}),
         layers: fontLayoutLayerPayload(payload.layers)
       }
     })),
@@ -1677,6 +1814,7 @@ export const browserAlbumApi = {
         ...(payload.productId !== undefined ? { product_id: payload.productId } : {}),
         ...(payload.name !== undefined ? { name: payload.name } : {}),
         ...(payload.sortKey !== undefined ? { sort_key: payload.sortKey } : {}),
+        ...(payload.previewImage !== undefined ? { preview_image: payload.previewImage } : {}),
         ...(payload.layers !== undefined ? { layers: fontLayoutLayerPayload(payload.layers) } : {})
       }
     })),

@@ -89,7 +89,6 @@ class WorkareaHandler {
 			? 0
 			: this.toPositiveNumber(values.spineWidth ?? this.handler.workarea?.spineWidth, 0.55),
 		spineBleed: (values.canvasRows ?? this.handler.workarea?.canvasRows) === 2
-			|| (values.spineWidthMode ?? this.handler.workarea?.spineWidthMode) === 'by_page_count'
 			? 0
 			: this.toPositiveNumber(values.spineBleed ?? this.handler.workarea?.spineBleed, 0.55),
 		canvasRows: (values.canvasRows ?? this.handler.workarea?.canvasRows) === 2 ? 2 : 1,
@@ -155,11 +154,17 @@ class WorkareaHandler {
 		const guides: PrintGuide[] = [];
 		const add = (orientation: PrintGuide['orientation'], position: number, kind: PrintGuideKind) => {
 			if (position < 0 || position > (orientation === 'vertical' ? width : height)) return;
-			if (
-				!guides.some(guide => guide.orientation === orientation && Math.abs(guide.position - position) < 0.01)
-			) {
-				guides.push({ orientation, position, kind });
+			const existing = guides.find(guide => (
+				guide.orientation === orientation && Math.abs(guide.position - position) < 0.01
+			));
+			if (existing) {
+				// Zero-width bleed boundaries coincide with content boundaries. In
+				// that case the solid content line must win over the dashed bleed
+				// line, otherwise a false dashed spine edge is rendered.
+				if (existing.kind === 'bleed' && kind === 'content') existing.kind = 'content';
+				return;
 			}
+			guides.push({ orientation, position, kind });
 		};
 		// Content boundaries are solid; bleed boundaries are blue dashed lines.
 		if (printValues.canvasRows === 2) {

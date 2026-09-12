@@ -1,4 +1,4 @@
-import { Button, Col, Form, Input, InputNumber, Row, Select, Slider, Space } from 'antd';
+import { Button, Col, Form, Input, InputNumber, Row, Space } from 'antd';
 import { CheckOutlined } from '@ant-design/icons';
 import i18next from 'i18next';
 import React from 'react';
@@ -9,7 +9,6 @@ import { imageMapPixelsPerUnit } from '../ImageMapSizeScheme';
 type GeneralPropertyData = {
 	type?: string;
 	name?: string;
-	rules?: string;
 	width: number;
 	height: number;
 	scaleX: number;
@@ -31,9 +30,6 @@ export type ImageMapTextGenerationRule = {
 type GeneralPropertyContext = {
 	onCenterHorizontally?: () => void;
 	onCenterVertically?: () => void;
-	textGenerationRules?: ImageMapTextGenerationRule[];
-	textGenerationRulesLoading?: boolean;
-	onTextGenerationRuleSelect?: (rule: ImageMapTextGenerationRule) => void;
 };
 
 export default {
@@ -50,32 +46,6 @@ export default {
 				<Form.Item label={i18next.t('common.name')} colon={false} name="name" initialValue={data.name}>
 					<Input />
 				</Form.Item>
-				{data.type === 'textbox' || data.superType === 'text' ? (
-					<React.Fragment>
-						<Form.Item label="规则模板" colon={false}>
-							<Select
-								allowClear
-								showSearch
-								optionFilterProp="label"
-								placeholder="选择规则模板"
-								loading={context.textGenerationRulesLoading}
-								value={context.textGenerationRules?.find(rule => rule.description === data.rules)?.id}
-								options={(context.textGenerationRules ?? []).map(rule => ({
-									value: rule.id,
-									label: rule.name || rule.description,
-									title: rule.description,
-								}))}
-								onChange={value => {
-									const rule = (context.textGenerationRules ?? []).find(candidate => candidate.id === value);
-									if (rule) context.onTextGenerationRuleSelect?.(rule);
-								}}
-							/>
-						</Form.Item>
-						<Form.Item label="生成规则" colon={false} name="rules" initialValue={data.rules}>
-							<Input.TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
-						</Form.Item>
-					</React.Fragment>
-				) : null}
 				<Row gutter={12} className="rde-object-general-row">
 					<Col span={12}>
 						<Form.Item
@@ -130,7 +100,7 @@ export default {
 						<Button aria-pressed={Boolean(data.verticalCentered)} icon={data.verticalCentered ? <CheckOutlined /> : undefined} type={data.verticalCentered ? 'primary' : 'default'} size="small" onClick={context.onCenterVertically}>垂直居中</Button>
 					</Space>
 				)}
-				{data.superType === 'element' ? null : data.type === 'textbox' || data.superType === 'text' ? (
+				{data.superType === 'element' ? null : data.type === 'textbox' || data.superType === 'text' ? null : (
 					<Form.Item
 						label={i18next.t('common.angle')}
 						colon={false}
@@ -139,16 +109,6 @@ export default {
 						rules={[{ type: 'number', required: true, message: '请输入旋转角度' }]}
 					>
 						<InputNumber min={0} max={360} controls={false} style={{ width: '100%' }} />
-					</Form.Item>
-				) : (
-					<Form.Item
-						label={i18next.t('common.angle')}
-						colon={false}
-						name="angle"
-						initialValue={data.angle}
-						rules={[{ type: 'number', required: true, message: '请输入旋转角度' }]}
-					>
-						<Slider min={0} max={360} />
 					</Form.Item>
 				)}
 			</React.Fragment>

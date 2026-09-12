@@ -30,9 +30,9 @@ function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [orderStatuses, setOrderStatuses] = useState<OrderStatusDefinition[]>([]);
   const [orderTotal, setOrderTotal] = useState(0);
-  const [orderLimit, setOrderLimit] = useState(20);
+  const [orderLimit, setOrderLimit] = useState(10);
   const [orderPage, setOrderPage] = useState(1);
-  const [orderFilters, setOrderFilters] = useState<OrderListFilters>({ limit: 20, pages: 1 });
+  const [orderFilters, setOrderFilters] = useState<OrderListFilters>({ limit: 10, pages: 1 });
   const [exports, setExports] = useState<ExportHistoryEntry[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
@@ -42,6 +42,8 @@ function App() {
   const [selectedSizeTemplatesShopId, setSelectedSizeTemplatesShopId] = useState<number>();
   const [selectedInnerPagesShopId, setSelectedInnerPagesShopId] = useState<number>();
   const [selectedInnerPagesProductId, setSelectedInnerPagesProductId] = useState<number>();
+  const [selectedFontLayoutsShopId, setSelectedFontLayoutsShopId] = useState<number>();
+  const [selectedFontLayoutsProductId, setSelectedFontLayoutsProductId] = useState<number>();
   const [selectedTemplateLibraryProductId, setSelectedTemplateLibraryProductId] = useState<number>();
   const [selectedTemplateLibraryShopId, setSelectedTemplateLibraryShopId] = useState<TemplateLibraryShopSelection>('ALL');
   const [selectedSizeTemplateId, setSelectedSizeTemplateId] = useState<number>();
@@ -52,7 +54,7 @@ function App() {
   const [account, setAccount] = useState<LocalUserProfile>();
   const [status, setStatus] = useState('准备就绪');
   const initializedRef = useRef(false);
-  const orderFiltersRef = useRef<OrderListFilters>({ limit: 20, pages: 1 });
+  const orderFiltersRef = useRef<OrderListFilters>({ limit: 10, pages: 1 });
 
   useEffect(() => {
     void requestSystemNotificationPermission();
@@ -203,6 +205,23 @@ function App() {
   }, [products, selectedInnerPagesProductId, selectedInnerPagesShopId, shops]);
 
   useEffect(() => {
+    const hasProductForShop = (shopId: number) => products.some((product) => (
+      product.shopIds.includes(shopId) || product.shops.some((shop) => shop.id === shopId)
+    ));
+    const nextShopId = selectedFontLayoutsShopId !== undefined && shops.some((shop) => shop.id === selectedFontLayoutsShopId) && hasProductForShop(selectedFontLayoutsShopId)
+      ? selectedFontLayoutsShopId
+      : shops.find((shop) => hasProductForShop(shop.id))?.id;
+    const availableProducts = products.filter((product) => nextShopId !== undefined && (
+      product.shopIds.includes(nextShopId) || product.shops.some((shop) => shop.id === nextShopId)
+    ));
+    const nextProductId = availableProducts.some((product) => product.id === selectedFontLayoutsProductId)
+      ? selectedFontLayoutsProductId
+      : availableProducts[0]?.id;
+    if (nextShopId !== selectedFontLayoutsShopId) setSelectedFontLayoutsShopId(nextShopId);
+    if (nextProductId !== selectedFontLayoutsProductId) setSelectedFontLayoutsProductId(nextProductId);
+  }, [products, selectedFontLayoutsProductId, selectedFontLayoutsShopId, shops]);
+
+  useEffect(() => {
     return connectOrderEventStream({
       onOrderSaved: (event) => {
         const orderNumber = String(event.data.order.order_number ?? '').trim();
@@ -308,6 +327,11 @@ function App() {
     setSelectedInnerPagesProductId(productId);
   }
 
+  function selectFontLayouts(shopId: number, productId: number) {
+    setSelectedFontLayoutsShopId(shopId);
+    setSelectedFontLayoutsProductId(productId);
+  }
+
   function clearTemplateLibraryContext() {
     setSelectedTemplateLibraryProductId(undefined);
     setSelectedTemplateLibraryShopId('ALL');
@@ -374,6 +398,8 @@ function App() {
     selectedSizeTemplatesShopId,
     selectedInnerPagesShopId,
     selectedInnerPagesProductId,
+    selectedFontLayoutsShopId,
+    selectedFontLayoutsProductId,
     products,
     selectedTemplateLibraryProductId,
     selectedTemplateLibraryShopId,
@@ -389,7 +415,8 @@ function App() {
   return (
     <AppLayout
       activeModule={activeModule}
-      editorMode={activeModule === 'editor' || activeModule === 'image-map-test' || (activeModule === 'template-library' && templateLibraryEditorMode) || (activeModule === 'inner-pages' && innerPagesEditorMode)}
+      account={account}
+      editorMode={activeModule === 'editor' || activeModule === 'image-map-test' || activeModule === 'font-layouts' || (activeModule === 'template-library' && templateLibraryEditorMode) || (activeModule === 'inner-pages' && innerPagesEditorMode)}
       shops={shops}
       products={products}
       selectedSizeTemplatesShopId={selectedSizeTemplatesShopId}
@@ -397,10 +424,13 @@ function App() {
       selectedTemplateLibraryShopId={selectedTemplateLibraryShopId}
       selectedInnerPagesShopId={selectedInnerPagesShopId}
       selectedInnerPagesProductId={selectedInnerPagesProductId}
+      selectedFontLayoutsShopId={selectedFontLayoutsShopId}
+      selectedFontLayoutsProductId={selectedFontLayoutsProductId}
       status={status}
       onModuleChange={navigateToModule}
       onSizeTemplatesShopChange={setSelectedSizeTemplatesShopId}
       onInnerPagesSelection={selectInnerPages}
+      onFontLayoutsSelection={selectFontLayouts}
       onTemplateLibrarySelection={selectTemplateLibrary}
       onClearTemplateLibraryContext={clearTemplateLibraryContext}
       onSaveProduct={saveProduct}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties, type ComponentProps, type PointerEvent, type ReactNode } from 'react';
 import {
   AppstoreOutlined,
   ColumnWidthOutlined,
@@ -23,6 +23,7 @@ import {
   Skeleton,
   Space,
   Statistic,
+  Select,
   Tag,
   Tooltip
 } from 'antd';
@@ -33,6 +34,7 @@ import type { ShopsPageProps } from '../types';
 type ShopFormValues = {
   shop: string;
   shopName: string;
+  settlementCurrency: string;
   wecomRobotWebhookUrl?: string;
 };
 
@@ -46,6 +48,30 @@ const shopOrderStatuses = [
   { status: 4, label: '待发货', countKey: 'pendingShipmentCount', className: 'shipment' },
   { status: 5, label: '已完成', countKey: 'completedOrderCount', className: 'completed' }
 ] as const;
+
+function ShopCard3D({ children, className = '', ...cardProps }: ComponentProps<typeof Card> & { children: ReactNode }) {
+  const [style, setStyle] = useState<CSSProperties>({});
+
+  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'touch') return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const rotateX = ((event.clientY - rect.top) / rect.height - 0.5) * -4.5;
+    const rotateY = ((event.clientX - rect.left) / rect.width - 0.5) * 6;
+    setStyle({ '--shop-card-rotate-x': `${rotateX}deg`, '--shop-card-rotate-y': `${rotateY}deg` } as CSSProperties);
+  }
+
+  return (
+    <Card
+      className={`shop-card ${className}`}
+      style={style}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={() => setStyle({})}
+      {...cardProps}
+    >
+      {children}
+    </Card>
+  );
+}
 
 export default function ShopsPage({
   shops,
@@ -70,6 +96,7 @@ export default function ShopsPage({
     form.setFieldsValue({
       shop: editingShop?.shop ?? '',
       shopName: editingShop?.shopName ?? '',
+      settlementCurrency: editingShop?.settlementCurrency ?? 'USD',
       wecomRobotWebhookUrl: editingShop?.wecomRobotWebhookUrl ?? ''
     });
   }, [editingShop, form, modalOpen]);
@@ -108,6 +135,7 @@ export default function ShopsPage({
     const payload: ShopPayload = {
       shop: values.shop.trim(),
       shopName: values.shopName.trim(),
+      settlementCurrency: values.settlementCurrency,
       wecomRobotWebhookUrl: values.wecomRobotWebhookUrl?.trim() ?? '',
       products
     };
@@ -165,8 +193,7 @@ export default function ShopsPage({
   ) : (
     <div className="shop-grid">
       {shops.map((shop) => (
-        <Card
-          className="shop-card"
+        <ShopCard3D
           key={shop.id}
           title={(
             <div className="shop-card-heading">
@@ -243,7 +270,7 @@ export default function ShopsPage({
               ))}
             </div>
           </div>
-        </Card>
+        </ShopCard3D>
       ))}
     </div>
   );
@@ -296,6 +323,9 @@ export default function ShopsPage({
             rules={[{ required: true, whitespace: true, message: '请输入店铺名称' }]}
           >
             <Input placeholder="请输入店铺名称" autoComplete="off" disabled={modalMode === 'view'} />
+          </Form.Item>
+          <Form.Item name="settlementCurrency" label="结算币种" rules={[{ required: true, message: '请选择结算币种' }]}>
+            <Select disabled={modalMode === 'view'} options={[{ value: 'USD', label: 'USD（美元）' }, { value: 'CAD', label: 'CAD（加元）' }]} />
           </Form.Item>
           <Form.Item
             name="wecomRobotWebhookUrl"
