@@ -15,6 +15,7 @@ export type Order = {
   status: number;
   statusText: string;
   statusButtonText: string;
+  wecomPreviewSent: boolean;
   createdAt?: string;
   shopId?: number;
   productId?: number;

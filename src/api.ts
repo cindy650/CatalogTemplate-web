@@ -293,6 +293,7 @@ function toOrder(value: unknown, index: number): Order {
     status: orderStatusValue(record.status),
     statusText: textValue(record.status_text).trim() || '未设置',
     statusButtonText: textValue(record.status_button_text).trim(),
+    wecomPreviewSent: booleanValue(record.wecom_preview_sent ?? record.wecomPreviewSent, false),
     createdAt: textValue(firstValue(record, 'created_at', 'createdAt')),
     ...(numberValue(firstValue(record, 'shop_id', 'shopId')) > 0
       ? { shopId: numberValue(firstValue(record, 'shop_id', 'shopId')) }

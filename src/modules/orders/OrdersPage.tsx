@@ -101,6 +101,7 @@ const fallbackOrderActionText: Record<number, string> = {
 };
 
 function orderActionText(order: Order): string {
+  if (order.status === 0) return '示意图已发送';
   return order.statusButtonText || fallbackOrderActionText[order.status] || '';
 }
 
@@ -506,8 +507,9 @@ export default function OrdersPage({
       align: 'center',
       className: 'order-actions-column',
       render: (_: unknown, { order }: OrderTableRow) => (
-        <Space className="order-actions" orientation="vertical" size={2}>
+        <Space className="order-actions" orientation="vertical" size={8}>
           {order.status === 0 && (
+            <Tooltip title="编辑订单图层；尚未关联模板时，先选择产品、模板和规格。">
             <Button
               block
               size="small"
@@ -519,8 +521,10 @@ export default function OrdersPage({
             >
               开始编辑
             </Button>
+            </Tooltip>
           )}
           {order.status === 0 && (
+            <Tooltip title="生成并发送示意图到企业微信，不会推进订单状态。">
             <Button
               block
               size="small"
@@ -533,11 +537,39 @@ export default function OrdersPage({
                 void sendPreviewImages(order);
               }}
             >
-              {orderActionText(order)}
+              发送示意图
             </Button>
+            </Tooltip>
+          )}
+          {order.status === 0 && (
+            <Popconfirm
+              title="确认示意图已发送？"
+              description="确认后将推进订单状态，请确认企业微信示意图已经发送成功。"
+              okText="确认推进"
+              cancelText="取消"
+              onConfirm={(event) => {
+                event?.stopPropagation();
+                void advanceOrderStatus(order);
+              }}
+              onCancel={(event) => event?.stopPropagation()}
+            >
+              <Button
+                block
+                size="small"
+                type="primary"
+                icon={<CheckOutlined />}
+                loading={advancingOrderId === order.id}
+                disabled={orderActionBusy}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Tooltip title="确认示意图已发送，二次确认后将订单推进至客户确认阶段。">
+                  <span>示意图已发送</span>
+                </Tooltip>
+              </Button>
+            </Popconfirm>
           )}
           {order.status === 1 && (
-            <Tooltip title={hasOrderTemplateJson(order) ? undefined : '该订单尚未存储模板 JSON'}>
+            <Tooltip title={hasOrderTemplateJson(order) ? '进入编辑器修改该订单保存的图层。' : '该订单尚未存储模板 JSON'}>
               <span style={{ display: 'block', width: '100%' }}>
                 <Button
                   block
@@ -654,6 +686,12 @@ export default function OrdersPage({
               </Button>
             </Popconfirm>
           )}
+          <Tag
+            color={order.wecomPreviewSent ? 'success' : 'error'}
+            style={{ marginTop: 20 }}
+          >
+            {order.wecomPreviewSent ? '成功发送企微' : '企微发送失败'}
+          </Tag>
         </Space>
       )
     }
