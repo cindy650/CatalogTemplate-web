@@ -4,7 +4,7 @@ import React, { type ReactNode } from 'react';
 
 import type { CanvasInstance } from '../../../canvas';
 import Scrollbar from '../../../components/common/Scrollbar';
-import { INSPECTOR_FORM_PROPS, EditorPanelHeader } from '../../../components/editor';
+import { INSPECTOR_FORM_PROPS } from '../../../components/editor';
 import {
 	convertImageMapSizeSchemeUnit,
 	type ImageMapSizeSchemeValue,
@@ -18,6 +18,8 @@ interface InnerPageMapPropertiesProps {
 	sizeSchemes: ImageMapSizeSchemeValue[];
 	activeSizeSchemeId: string;
 	onAddSizeScheme: () => void;
+	onSaveSizeScheme: (values: Omit<ImageMapSizeSchemeValue, 'id'>) => void;
+	onRegisterSaveSizeScheme?: (handler: () => void) => void;
 	onSelectSizeScheme: (id: string) => void;
 	fontLayoutTrigger?: ReactNode;
 	fontLayoutSelection?: ReactNode;
@@ -30,6 +32,8 @@ const InnerPageMapProperties = ({
 	sizeSchemes,
 	activeSizeSchemeId,
 	onAddSizeScheme,
+	onSaveSizeScheme,
+	onRegisterSaveSizeScheme,
 	onSelectSizeScheme,
 	fontLayoutTrigger,
 	fontLayoutSelection,
@@ -38,6 +42,24 @@ const InnerPageMapProperties = ({
 	const workarea = canvasRef?.handler?.workarea;
 	const activeSizeScheme = sizeSchemes.find(item => item.id === activeSizeSchemeId) ?? sizeSchemes[0];
 	const unitRef = React.useRef(activeSizeScheme?.unit ?? 'in');
+	const saveSizeScheme = React.useCallback(() => {
+		void form.validateFields(['sizeSchemeLabel', 'unit', 'sideWidth', 'sideHeight']).then(values => {
+			if (!activeSizeScheme) return;
+			const { id: _id, ...current } = activeSizeScheme;
+			onSaveSizeScheme({
+				...current,
+				label: String(values.sizeSchemeLabel).trim(),
+				unit: values.unit,
+				sideWidth: Number(values.sideWidth),
+				sideHeight: Number(values.sideHeight),
+			});
+		});
+	}, [activeSizeScheme, form, onSaveSizeScheme]);
+
+	React.useEffect(() => {
+		onRegisterSaveSizeScheme?.(saveSizeScheme);
+		return () => onRegisterSaveSizeScheme?.(() => undefined);
+	}, [onRegisterSaveSizeScheme, saveSizeScheme]);
 
 	React.useEffect(() => {
 		if (!workarea) {
@@ -97,7 +119,6 @@ const InnerPageMapProperties = ({
 					}
 				}}
 			>
-				<EditorPanelHeader eyebrow="规格" title="内页尺寸" description="当前规格的成品宽高" />
 				<Collapse
 					bordered={false}
 					expandIconPosition="end"

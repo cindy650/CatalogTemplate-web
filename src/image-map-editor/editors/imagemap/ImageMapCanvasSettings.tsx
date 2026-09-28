@@ -85,7 +85,7 @@ interface ImageMapCanvasSettingsProps {
 
 		return (
 		<section ref={settingsRef} className="rde-imagemap-canvas-settings">
-			<EditorPanelHeader eyebrow="规格" title="尺寸方案" />
+			{!innerPageMode ? <EditorPanelHeader eyebrow="规格" title="尺寸方案" /> : null}
 			<div className="rde-imagemap-canvas-settings-content">
 				{innerPageMode ? (
 				<InnerPageMapProperties
@@ -94,6 +94,8 @@ interface ImageMapCanvasSettingsProps {
 					sizeSchemes={sizeSchemes}
 					activeSizeSchemeId={activeSizeSchemeId}
 					onAddSizeScheme={onAddSizeScheme}
+					onSaveSizeScheme={onSaveSizeScheme}
+					onRegisterSaveSizeScheme={onRegisterSaveSizeScheme}
 					onSelectSizeScheme={onSelectSizeScheme}
 					fontLayoutTrigger={fontLayoutTrigger}
 					fontLayoutSelection={fontLayoutSelection}

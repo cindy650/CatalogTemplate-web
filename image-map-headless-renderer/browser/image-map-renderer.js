@@ -647,7 +647,9 @@
       backgroundColor: String(workarea.backgroundColor || '#ffffff'),
       layerNames: layerNames(objects),
       fontSources: collectFontSources(objects, { textToSvg }),
-      printGuides: renderedPrintGuides(workarea, bounds),
+      // Print dimensions and bleed guides are editor-only overlays and must
+      // not be included in exported SVG artwork.
+      printGuides: [],
     };
   }
 

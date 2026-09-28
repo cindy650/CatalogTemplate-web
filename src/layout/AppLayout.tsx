@@ -98,10 +98,8 @@ function normalizeProductBleed(value: unknown, mode: 'single' | 'double'): numbe
 
 const defaultSpineWidthFormula: SpineWidthFormula = {
   unit: 'cm',
-  pageCountCoefficient: 0.2,
-  pageCountThickness: 0.3,
-  baseWidth: 1,
-  additionalWidth: 0.9,
+  paperThickness: 0.5,
+  fixedWidth: 10,
   spineBleed: 0
 };
 
@@ -118,10 +116,8 @@ function normalizedSpineWidthFormula(value?: Partial<SpineWidthFormula>): SpineW
   if (!value) return undefined;
   return {
     unit: value.unit === 'in' || value.unit === 'mm' ? value.unit : 'cm',
-    pageCountCoefficient: Number(value.pageCountCoefficient) || 0,
-    pageCountThickness: Number(value.pageCountThickness) || 0,
-    baseWidth: Number(value.baseWidth) || 0,
-    additionalWidth: Number(value.additionalWidth) || 0,
+    paperThickness: Number(value.paperThickness) || 0,
+    fixedWidth: Number(value.fixedWidth) || 0,
     spineBleed: 0
   };
 }
@@ -764,13 +760,11 @@ export default function AppLayout({
           {showProductSpineWidthFormula && productUsesSpineWidthFormula ? (
             <div className="product-spine-width-formula-editor">
               <Typography.Title level={5}>产品公式</Typography.Title>
-              <Typography.Text type="secondary">最终背脊宽会根据默认页数实时计算。</Typography.Text>
+              <Typography.Text type="secondary">背脊宽 = 页数 × 纸张厚度 + 固定值；最终背脊宽会根据默认页数实时计算。</Typography.Text>
               <div className="product-common-spec-grid">
                 <Form.Item name={['spineWidthFormula', 'unit']} label="公式单位"><Select options={[{ value: 'cm', label: 'cm' }, { value: 'mm', label: 'mm' }, { value: 'in', label: 'in' }]} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'pageCountCoefficient']} label="页数系数"><InputNumber min={0} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'pageCountThickness']} label="每页厚度"><InputNumber min={0} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'baseWidth']} label="基础宽度"><InputNumber min={0} /></Form.Item>
-                <Form.Item name={['spineWidthFormula', 'additionalWidth']} label="附加宽度"><InputNumber min={0} /></Form.Item>
+                <Form.Item name={['spineWidthFormula', 'paperThickness']} label="纸张厚度"><InputNumber min={0} /></Form.Item>
+                <Form.Item name={['spineWidthFormula', 'fixedWidth']} label="固定值"><InputNumber min={0} /></Form.Item>
               </div>
             </div>
           ) : null}

@@ -95,10 +95,8 @@ export const createImageMapSizeScheme = (
 		spineBleed: positiveNumber(value.spineBleed, 0.55),
 		...(value.spineWidthFormula ? { spineWidthFormula: {
 			unit: value.spineWidthFormula.unit === 'in' || value.spineWidthFormula.unit === 'mm' ? value.spineWidthFormula.unit : 'cm',
-			pageCountCoefficient: positiveNumber(value.spineWidthFormula.pageCountCoefficient, 0),
-			pageCountThickness: positiveNumber(value.spineWidthFormula.pageCountThickness, 0),
-			baseWidth: positiveNumber(value.spineWidthFormula.baseWidth, 0),
-			additionalWidth: positiveNumber(value.spineWidthFormula.additionalWidth, 0),
+			paperThickness: positiveNumber(value.spineWidthFormula.paperThickness, 0),
+			fixedWidth: positiveNumber(value.spineWidthFormula.fixedWidth, 0),
 			spineBleed: positiveNumber(value.spineWidthFormula.spineBleed, 0),
 		} } : {}),
 		backCoverSafeDistance: createSafeDistance(value.backCoverSafeDistance),
@@ -184,9 +182,8 @@ export const resolveImageMapSpineWidth = (
 		: [];
 	const pageCount = positiveInteger(value.pageCount, pageOptions[0] ?? 50);
 	const formulaUnit = formula.unit === 'in' || formula.unit === 'mm' ? formula.unit : 'cm';
-	const formulaWidth = pageCount * positiveNumber(formula.pageCountCoefficient, 0) * positiveNumber(formula.pageCountThickness, 0)
-		+ positiveNumber(formula.baseWidth, 0)
-		+ positiveNumber(formula.additionalWidth, 0);
+	const formulaWidth = pageCount * positiveNumber(formula.paperThickness, 0)
+		+ positiveNumber(formula.fixedWidth, 0);
 	return convertedNumber(formulaWidth, formulaUnit, canvasUnit);
 };
 

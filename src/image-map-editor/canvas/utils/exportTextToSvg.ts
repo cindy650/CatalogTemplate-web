@@ -40,6 +40,22 @@ const numberValue = (element: Element, attribute: string) => {
 	return Number.isFinite(value) ? value : 0;
 };
 
+const getFontGlyph = (textToSvg: TextToSVG, character: string) => {
+	const font = (textToSvg as TextToSVG & {
+		font?: { charToGlyph?: (value: string) => { index?: number } };
+	}).font;
+	return font?.charToGlyph?.(character);
+};
+
+const hasUsableGlyph = (textToSvg: TextToSVG, character: string) => {
+	const glyph = getFontGlyph(textToSvg, character);
+	if (!glyph) return true;
+	if (/^\s$/u.test(character)) return true;
+	if (glyph.index === 0) return false;
+	const commands = (glyph as { path?: { commands?: unknown[] } }).path?.commands;
+	return !commands || commands.length > 0;
+};
+
 const loadFont = (url: string) => {
 	const cached = fontCache.get(url);
 	if (cached) return cached;
@@ -63,6 +79,15 @@ const copyPathAttributes = (text: Element, path: Element) => {
 			path.setAttribute(attribute.name, attribute.value);
 		}
 	});
+};
+
+const copyFallbackTextAttributes = (source: Element, target: Element, includeIdentity: boolean) => {
+	Array.from(source.attributes).forEach(attribute => {
+		if (['x', 'y', 'dx', 'dy'].includes(attribute.name)) return;
+		if (!includeIdentity && ['id', 'data-name', 'data-layer-name'].includes(attribute.name)) return;
+		target.setAttribute(attribute.name, attribute.value);
+	});
+	target.setAttribute('xml:space', 'preserve');
 };
 
 const replaceTextWithPaths = async (
@@ -91,12 +116,14 @@ const replaceTextWithPaths = async (
 
 		const spans = Array.from(text.children).filter(child => child.localName === 'tspan');
 		const textRuns = spans.length ? spans : [text];
-		const paths = textRuns.flatMap(run => {
+		const paths: Element[] = [];
+		let fallbackTextCount = 0;
+		for (const run of textRuns) {
 			const content = run.textContent || '';
-			if (!content) return [];
+			if (!content) continue;
 			const x = numberValue(run, 'x');
 			const y = numberValue(run, 'y');
-			return buildWhitespaceSafePathRuns(content, x, y, {
+			const textPaths = buildWhitespaceSafePathRuns(content, x, y, {
 				getAdvanceWidth: value => textToSvg.getWidth(value, { fontSize, kerning: true }),
 				getPathData: (value, pathX, pathY) => textToSvg.getD(value, {
 					x: pathX,
@@ -104,14 +131,31 @@ const replaceTextWithPaths = async (
 					fontSize,
 					kerning: true,
 				}),
-			}).map(({ d }) => {
+				normalizeCharacter: character => {
+					return character;
+				},
+				keepCharacterAsText: character => !hasUsableGlyph(textToSvg, character),
+			});
+			textPaths.forEach(runPath => {
+				if (runPath.text !== undefined) {
+					const fallbackText = document.createElementNS(SVG_NAMESPACE, 'text');
+					copyFallbackTextAttributes(text, fallbackText, fallbackTextCount === 0);
+					fallbackText.setAttribute('x', String(runPath.x ?? x));
+					fallbackText.setAttribute('y', String(runPath.y ?? y));
+					fallbackText.setAttribute('data-symbol-fallback', 'true');
+					fallbackText.textContent = runPath.text;
+					text.parentElement?.insertBefore(fallbackText, text);
+					fallbackTextCount += 1;
+					return;
+				}
+				if (!runPath.d) return;
 				const path = document.createElementNS(SVG_NAMESPACE, 'path');
 				copyPathAttributes(text, path);
-				path.setAttribute('d', d);
-				return path;
+				path.setAttribute('d', runPath.d);
+				paths.push(path);
 			});
-		});
-		if (!paths.length) continue;
+		}
+		if (!paths.length && fallbackTextCount === 0) continue;
 		paths.forEach(path => text.parentElement?.insertBefore(path, text));
 		text.remove();
 	}

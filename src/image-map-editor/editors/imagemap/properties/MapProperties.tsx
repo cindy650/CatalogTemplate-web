@@ -210,10 +210,8 @@ const MapProperties = ({
 			'spineWidth',
 			...(usesSpineWidthFormula ? [
 				['spineWidthFormula', 'unit'],
-				['spineWidthFormula', 'pageCountCoefficient'],
-				['spineWidthFormula', 'pageCountThickness'],
-				['spineWidthFormula', 'baseWidth'],
-				['spineWidthFormula', 'additionalWidth'],
+				['spineWidthFormula', 'paperThickness'],
+				['spineWidthFormula', 'fixedWidth'],
 			] : usesSpineWidthPageTable ? [] : ['spineBleed', 'minSpineWidth', 'maxSpineWidth']),
 			'backCoverSafeDistance',
 			'coverSafeDistance',
@@ -240,10 +238,8 @@ const MapProperties = ({
 				spineBleed: usesSpineWidthFormula || usesSpineWidthPageTable ? calculatedSpineBleed : allValues.spineBleed ?? 0,
 				...(usesSpineWidthFormula ? { spineWidthFormula: {
 					unit: allValues.spineWidthFormula?.unit ?? 'cm',
-					pageCountCoefficient: Number(allValues.spineWidthFormula?.pageCountCoefficient) || 0,
-					pageCountThickness: Number(allValues.spineWidthFormula?.pageCountThickness) || 0,
-					baseWidth: Number(allValues.spineWidthFormula?.baseWidth) || 0,
-					additionalWidth: Number(allValues.spineWidthFormula?.additionalWidth) || 0,
+					paperThickness: Number(allValues.spineWidthFormula?.paperThickness) || 0,
+					fixedWidth: Number(allValues.spineWidthFormula?.fixedWidth) || 0,
 					spineBleed: calculatedSpineBleed,
 				} } : {}),
 				backCoverSafeDistance: allValues.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
@@ -499,10 +495,8 @@ const MapProperties = ({
 											'spineWidth',
 											...(usesSpineWidthFormula ? [
 												['spineWidthFormula', 'unit'],
-												['spineWidthFormula', 'pageCountCoefficient'],
-												['spineWidthFormula', 'pageCountThickness'],
-												['spineWidthFormula', 'baseWidth'],
-												['spineWidthFormula', 'additionalWidth'],
+												['spineWidthFormula', 'paperThickness'],
+												['spineWidthFormula', 'fixedWidth'],
 											] : ['spineBleed']),
 										'minSpineWidth',
 										'maxSpineWidth',
@@ -530,13 +524,11 @@ const MapProperties = ({
 														minSpineWidth: usesSpineWidthFormula ? 0 : allValues.minSpineWidth ?? 0,
 														maxSpineWidth: usesSpineWidthFormula ? 0 : allValues.maxSpineWidth ?? 0,
 														spineBleed: usesSpineWidthFormula ? 0 : allValues.spineBleed ?? 0,
-														...(usesSpineWidthFormula ? { spineWidthFormula: {
-													unit: allValues.spineWidthFormula?.unit ?? 'cm',
-													pageCountCoefficient: Number(allValues.spineWidthFormula?.pageCountCoefficient) || 0,
-													pageCountThickness: Number(allValues.spineWidthFormula?.pageCountThickness) || 0,
-													baseWidth: Number(allValues.spineWidthFormula?.baseWidth) || 0,
-													additionalWidth: Number(allValues.spineWidthFormula?.additionalWidth) || 0,
-													spineBleed: 0,
+												...(usesSpineWidthFormula ? { spineWidthFormula: {
+																							unit: allValues.spineWidthFormula?.unit ?? 'cm',
+																							paperThickness: Number(allValues.spineWidthFormula?.paperThickness) || 0,
+																							fixedWidth: Number(allValues.spineWidthFormula?.fixedWidth) || 0,
+																							spineBleed: 0,
 												} } : {}),
 											backCoverSafeDistance: allValues.backCoverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
 											coverSafeDistance: allValues.coverSafeDistance ?? { top: 0, right: 0, bottom: 0, left: 0 },
@@ -700,15 +692,13 @@ const MapProperties = ({
 					{usesSpineWidthFormula ? (
 						<div className="rde-spine-width-formula-editor">
 							<div className="rde-spine-width-formula-title">按页数背脊宽公式</div>
-							<div className="rde-spine-width-formula-hint">背脊宽 = 页数 × 系数 × 每页厚度 + 基础宽度 + 附加宽度</div>
+							<div className="rde-spine-width-formula-hint">背脊宽 = 页数 × 纸张厚度 + 固定值</div>
 							<Row gutter={8}>
 								<Col span={8}><Form.Item label="公式单位" name={['spineWidthFormula', 'unit']} rules={[{ required: true, message: '请选择公式单位' }]}><Select disabled options={[{ value: 'cm', label: 'cm' }, { value: 'mm', label: 'mm' }, { value: 'in', label: 'in' }]} /></Form.Item></Col>
-								<Col span={8}><Form.Item label="页数系数" name={['spineWidthFormula', 'pageCountCoefficient']} rules={[{ required: true, message: '请输入页数系数' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
-								<Col span={8}><Form.Item label="每页厚度" name={['spineWidthFormula', 'pageCountThickness']} rules={[{ required: true, message: '请输入每页厚度' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
+								<Col span={8}><Form.Item label="纸张厚度" name={['spineWidthFormula', 'paperThickness']} rules={[{ required: true, message: '请输入纸张厚度' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
+								<Col span={8}><Form.Item label="固定值" name={['spineWidthFormula', 'fixedWidth']} rules={[{ required: true, message: '请输入固定值' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
 							</Row>
 							<Row gutter={8}>
-								<Col span={8}><Form.Item label="基础宽度" name={['spineWidthFormula', 'baseWidth']} rules={[{ required: true, message: '请输入基础宽度' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
-								<Col span={8}><Form.Item label="附加宽度" name={['spineWidthFormula', 'additionalWidth']} rules={[{ required: true, message: '请输入附加宽度' }]}><InputNumber disabled min={0} precision={4} style={{ width: '100%' }} /></Form.Item></Col>
 								<Col span={8}><Form.Item label="背脊出血"><InputNumber value={calculatedSpineBleed} addonAfter={selectedCanvasUnit} disabled style={{ width: '100%' }} /></Form.Item></Col>
 							</Row>
 							<Row gutter={8}>

@@ -2194,7 +2194,9 @@ class Handler implements HandlerOptions {
 				bounds,
 				backgroundColor: String((this.workarea as any).backgroundColor || '#ffffff'),
 				fontSources: Array.from(fontSources.values()),
-				printGuides: this.workareaHandler.getRenderedPrintGuides(),
+				// Print dimensions, bleed lines and other guides are editor-only
+				// overlays. They must not become drawable SVG content.
+				printGuides: [],
 				layerNames: new Map(this.canvas.getObjects().map((object: any) => [String(object.id || ''), String(object.name || (object.id === 'workarea' ? '画布' : object.id) || object.type || '图层')])) ,
 			});
 		} catch (error) {
@@ -2244,7 +2246,9 @@ class Handler implements HandlerOptions {
 				bounds,
 				backgroundColor: String((this.workarea as any).backgroundColor || '#ffffff'),
 				fontSources: Array.from(fontSources.values()),
-				printGuides: this.workareaHandler.getRenderedPrintGuides(),
+				// Keep SVG exports limited to the artwork; guides remain visible only
+				// in the editor preview.
+				printGuides: [],
 				layerNames: new Map(this.canvas.getObjects().map((object: any) => [String(object.id || ''), String(object.name || (object.id === 'workarea' ? '画布' : object.id) || object.type || '图层')])) ,
 			});
 		} catch (error) {

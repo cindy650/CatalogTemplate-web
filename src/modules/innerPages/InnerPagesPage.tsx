@@ -6,8 +6,19 @@ import { browserAlbumApi } from '../../api';
 import { ImageMapEditor } from '../../image-map-editor/editor-entry';
 import type { ImageMapEditorDocumentValue } from '../../image-map-editor/editor-entry';
 import type { ImageMapSizeSchemeValue } from '../../image-map-editor/editors/imagemap/ImageMapSizeScheme';
-import { applyTextFont, loadTextFonts } from '../fontRuntime';
-import { loadTextGenerationRules } from '../imageMapEditorTest/imageMapEditorHost';
+import {
+  applyTextFont,
+  createInnerPageFontLayout,
+  deleteInnerPageFontLayout,
+  loadFontLayoutCategories,
+  loadFontLayoutProducts,
+  loadInnerPageFontLayouts,
+  loadTextFonts,
+  loadTextGenerationRules,
+  saveInnerPageFontLayout,
+  updateInnerPageFontLayout,
+  syncInnerPageFontLayoutOptions,
+} from '../imageMapEditorTest/imageMapEditorHost';
 import type { InnerPagesPageProps } from '../types';
 
 function shopName(shop?: Shop): string { return shop?.shopName || shop?.shop || '未命名店铺'; }
@@ -68,6 +79,7 @@ export default function InnerPagesPage({ shops, products, selectedShopId, select
   const [uploadingPreview, setUploadingPreview] = useState(false);
   const editingTemplate = typeof editingId === 'number' ? templates.find((item) => item.id === editingId) : undefined;
   const layersRef = useRef<Map<string, InnerPageSizeOption['layers']>>(new Map());
+  const schemesRef = useRef<ImageMapSizeSchemeValue[]>([]);
 
   useEffect(() => { onEditorModeChange?.(editingId !== undefined); return () => onEditorModeChange?.(false); }, [editingId, onEditorModeChange]);
   useEffect(() => {
@@ -116,7 +128,8 @@ export default function InnerPagesPage({ shops, products, selectedShopId, select
     if (layersRef.current.size === 0) initialOptions.forEach((option) => layersRef.current.set(option.id, option.layers));
     const save = async (document: ImageMapEditorDocumentValue) => {
       layersRef.current.set(document.activeSizeSchemeId, ensureInnerPageWorkarea(document.layers));
-      const sizeOptions = document.sizeSchemes.map((scheme) => ({ id: scheme.id, label: scheme.label, sizeUnit: scheme.unit, layers: ensureInnerPageWorkarea(layersRef.current.get(scheme.id) ?? document.layers) }));
+      const currentSchemes = schemesRef.current.length ? schemesRef.current : document.sizeSchemes;
+      const sizeOptions = currentSchemes.map((scheme) => ({ id: scheme.id, label: scheme.label, sizeUnit: scheme.unit, layers: ensureInnerPageWorkarea(layersRef.current.get(scheme.id) ?? (scheme.id === document.activeSizeSchemeId ? document.layers : { objects: [], animations: [], styles: [], dataSources: [] })) }));
       const payload = { productId: product.id, ...(editingTemplate ? {} : { shopId: shop.id }), name: document.basicInfo.templateName.trim() || '未命名内页模板', description: editingTemplate?.description ?? '', sizeOptions };
       const saved = editingTemplate ? await browserAlbumApi.innerPageTemplates.update(editingTemplate.id, payload) : await browserAlbumApi.innerPageTemplates.create(payload);
       setTemplates((current) => editingTemplate ? current.map((item) => item.id === saved.id ? saved : item) : [saved, ...current]);
@@ -154,7 +167,44 @@ export default function InnerPagesPage({ shops, products, selectedShopId, select
       const saved = await browserAlbumApi.innerPageTemplates.get(editingTemplate.id);
       setTemplates((current) => current.map((item) => item.id === saved.id ? saved : item));
     };
-    return <div className="image-map-editor-test-page"><ImageMapEditor innerPageMode hiddenActivities={['fontLayouts']} shops={[{ value: shop.id, label: shopName(shop) }]} initialBasicInfo={{ shopId: shop.id, templateName: editingTemplate?.name ?? `${product.name} 内页` }} initialSizeSchemes={toSchemes(editingTemplate, `${product.name} 内页规格`)} initialLayers={initialOptions[0]?.layers} loadSizeSchemeLayers={async (sizeOptionId) => layersRef.current.get(sizeOptionId) ?? editingTemplate?.sizeOptions.find((item) => item.id === sizeOptionId)?.layers} onSizeSchemeLayersChange={(sizeOptionId, layers) => layersRef.current.set(sizeOptionId, ensureInnerPageWorkarea(layers))} applyTextFont={applyTextFont} loadTextFonts={loadTextFonts} loadTextGenerationRules={loadTextGenerationRules} onSaveDocument={save} onSaveSizeSchemes={saveSizeSchemes} onExit={() => { layersRef.current.clear(); setEditingId(undefined); }} saveSuccessMessage="内页模板已保存" saveLocation="header" /></div>;
+    return <div className="image-map-editor-test-page"><ImageMapEditor
+      innerPageMode
+      shops={[{ value: shop.id, label: shopName(shop) }]}
+      initialProductId={product.id}
+      fontLayoutManagementEnabled
+      fontLayoutSyncEnabled
+      createFontLayout={createInnerPageFontLayout}
+      deleteFontLayout={deleteInnerPageFontLayout}
+      loadFontLayoutCategories={loadFontLayoutCategories}
+      loadFontLayoutProducts={loadFontLayoutProducts}
+      loadFontLayouts={(shopId, productId) => loadInnerPageFontLayouts(shopId, productId === undefined ? product.id : Number(productId))}
+      saveFontLayout={saveInnerPageFontLayout}
+      updateFontLayout={updateInnerPageFontLayout}
+      initialBasicInfo={{ shopId: shop.id, templateName: editingTemplate?.name ?? `${product.name} 内页` }}
+      initialSizeSchemes={toSchemes(editingTemplate, `${product.name} 内页规格`)}
+      initialLayers={initialOptions[0]?.layers}
+      loadSizeSchemeLayers={async (sizeOptionId) => {
+        if (editingTemplate) {
+          const latest = await browserAlbumApi.innerPageTemplates.get(editingTemplate.id);
+          const option = latest.sizeOptions.find((item) => item.id === sizeOptionId);
+          if (option) layersRef.current.set(sizeOptionId, option.layers);
+          return option?.layers;
+        }
+        return layersRef.current.get(sizeOptionId);
+      }}
+      onSizeSchemeLayersChange={(sizeOptionId, layers) => layersRef.current.set(sizeOptionId, ensureInnerPageWorkarea(layers))}
+      onSizeSchemesChange={(schemes) => { schemesRef.current = schemes; }}
+      applyTextFont={applyTextFont}
+      loadTextFonts={loadTextFonts}
+      loadTextGenerationRules={loadTextGenerationRules}
+      onSaveDocument={save}
+      onSaveSizeSchemes={saveSizeSchemes}
+      sizeTemplateId={editingTemplate?.id}
+      syncFontLayoutSizeOptions={syncInnerPageFontLayoutOptions}
+      onExit={() => { layersRef.current.clear(); setEditingId(undefined); }}
+      saveSuccessMessage="内页模板已保存"
+      saveLocation="header"
+    /></div>;
   }
   return <section className="panel inner-pages-page"><header className="inner-pages-header"><div><span>内页模块</span><h1>{shopName(shop)} / {product.name || '未命名产品'}</h1></div><div className="inner-pages-header-actions"><Button icon={<ReloadOutlined />} loading={loading} onClick={() => setReloadVersion((value) => value + 1)}>刷新</Button><Button className="inner-pages-create-button" type="primary" icon={<PlusOutlined />} onClick={openCreateDialog}>新增内页模板</Button></div></header><div className="inner-pages-toolbar"><Input allowClear placeholder="搜索内页模板" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></div>{loading ? <div className="template-library-loading"><Spin size="large" /></div> : visibleTemplates.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前产品暂无内页模板" /> : <div className="inner-pages-grid">{visibleTemplates.map((item) => <Card className="inner-page-card" key={item.id}><div className="inner-page-card-preview">{item.previewImagePath ? <Image src={item.previewImagePath} alt={`${item.name || '内页模板'}预览图`} preview={{ src: item.previewImagePath }} /> : <div className="inner-page-card-preview-empty"><PictureOutlined /><span>暂无预览图</span></div>}</div><div className="inner-page-card-title"><div><strong>{item.name || '未命名内页模板'}</strong><span>{item.description || '通用内页'}</span></div><Tag>{item.sizeOptions.length} 个规格</Tag></div><div className="inner-page-card-specs"><span>已有规格</span><div>{item.sizeOptions.length ? item.sizeOptions.map((option) => <Tag key={option.id}>{option.label || option.id}</Tag>) : <span className="inner-page-card-specs-empty">暂无规格</span>}</div></div><div className="inner-page-card-meta"><span>{shopName(shop)}</span><span>{product.name}</span><Button type="link" icon={<EditOutlined />} onClick={() => setEditingId(item.id)}>打开编辑</Button></div></Card>)}</div>}
     <Modal title="新增内页模板" open={createOpen} width={780} destroyOnHidden confirmLoading={creating} okButtonProps={{ disabled: uploadingPreview }} okText="保存并进入编辑器" cancelText="取消" onCancel={() => setCreateOpen(false)} onOk={() => void createInnerPageTemplate()}>

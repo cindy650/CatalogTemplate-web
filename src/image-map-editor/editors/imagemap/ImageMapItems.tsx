@@ -122,6 +122,36 @@ const ImageMapItems = React.forwardRef<ImageMapItemsHandle, ImageMapItemsProps>(
 							},
 							false,
 						);
+					} else if (type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
+						// SVG files need to be parsed as XML before creating the async
+						// Fabric group. Passing the File object as `src` leaves Svg with
+						// no URL and results in a blank, unusable layer.
+						const reader = new FileReader();
+						reader.onload = () => {
+							const source = String(reader.result || '');
+							if (!source.trim()) {
+								notification.warning({ message: 'SVG 文件内容为空' });
+								return;
+							}
+							onAddItem(
+								{
+									icon: { name: 'bezier-curve' },
+									name: file.name,
+									option: {
+										type: 'svg',
+										superType: 'svg',
+										loadType: 'svg',
+										src: source,
+										svg: source,
+										left: layerX,
+										top: layerY,
+									},
+								},
+								false,
+							);
+						};
+						reader.onerror = () => notification.warning({ message: 'SVG 文件读取失败' });
+						reader.readAsText(file);
 					} else {
 						notification.warning({
 							message: '不支持的文件类型',

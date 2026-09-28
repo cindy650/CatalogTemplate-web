@@ -1,10 +1,15 @@
 export interface PathTextMetrics {
 	getAdvanceWidth: (text: string) => number;
 	getPathData: (text: string, x: number, y: number) => string;
+	normalizeCharacter?: (character: string) => string;
+	keepCharacterAsText?: (character: string) => boolean;
 }
 
 export interface TextPathRun {
-	d: string;
+	d?: string;
+	text?: string;
+	x?: number;
+	y?: number;
 }
 
 /**
@@ -30,12 +35,28 @@ export const buildWhitespaceSafePathRuns = (
 	};
 
 	for (const character of Array.from(text)) {
-		if (/\s/u.test(character)) {
+		// Variation selectors are not printable glyphs. Passing them to
+		// opentype.js can resolve .notdef and produce a missing symbol/box.
+		if (character === '\uFE0E' || character === '\uFE0F') {
+			const previous = runs[runs.length - 1];
+			if (previous?.text) previous.text += character;
+			continue;
+		}
+		const normalizedCharacter = metrics.normalizeCharacter?.(character) ?? character;
+		if (/\s/u.test(normalizedCharacter)) {
 			flush();
-			const width = Number(metrics.getAdvanceWidth(character));
+			const width = Number(metrics.getAdvanceWidth(normalizedCharacter));
+			if (Number.isFinite(width)) cursorX += width;
+		} else if (metrics.keepCharacterAsText?.(normalizedCharacter)) {
+			// If the selected font has no outline for a symbol, preserve the
+			// original text node so the SVG viewer can apply its normal fallback
+			// font. Converting it with another font changes the visual design.
+			flush();
+			runs.push({ text: normalizedCharacter, x: cursorX, y });
+			const width = Number(metrics.getAdvanceWidth(normalizedCharacter));
 			if (Number.isFinite(width)) cursorX += width;
 		} else {
-			segment += character;
+			segment += normalizedCharacter;
 		}
 	}
 	flush();

@@ -113,10 +113,8 @@ export type ProductCommonSpecValue = {
 
 export type SpineWidthFormula = {
   unit: SizeTemplateUnit;
-  pageCountCoefficient: number;
-  pageCountThickness: number;
-  baseWidth: number;
-  additionalWidth: number;
+  paperThickness: number;
+  fixedWidth: number;
   spineBleed: number;
 };
 
@@ -435,6 +433,7 @@ export type FontLayoutLibraryTemplate = {
   id: number;
   shopId: number;
   productId?: number;
+  layoutScope?: 'size' | 'inner_page';
   productCategoryName?: string;
   name: string;
   sortKey: string;
@@ -458,6 +457,7 @@ export type FontLayoutLayerData = {
 export type FontLayoutLibraryPayload = {
   shopId: number;
   productId?: number;
+  layoutScope?: 'size' | 'inner_page';
   name: string;
   sortKey: string;
   previewImage?: string;
@@ -484,6 +484,8 @@ export type FontLayoutSizeOptionsSyncResult = {
   missingSizeOptionIds: string[];
   message?: string;
 };
+
+export type FontLayoutInnerPageOptionsSyncResult = FontLayoutSizeOptionsSyncResult;
 
 export type AddMountedFontLayoutPayload = {
   fontLayoutTemplateId: number;

@@ -1749,7 +1749,13 @@ class ImageMapEditor extends Component<ImageMapEditorProps, ImageMapEditorState>
 				size="small"
 				icon={<SaveOutlined />}
 				disabled={savingDocument}
-				onClick={this.props.saveConfirmTitle ? undefined : () => void this.saveEditorDocument()}
+				onClick={this.props.saveConfirmTitle ? undefined : () => {
+					if (isInnerPageSaveButton && this.props.onSaveSizeSchemes) {
+						this.saveSizeSchemeHandler();
+						return;
+					}
+					void this.saveEditorDocument();
+				}}
 			>
 				{saveButtonLabel}
 			</Button>

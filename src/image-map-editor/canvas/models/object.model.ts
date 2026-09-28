@@ -310,10 +310,8 @@ export interface WorkareaOption {
 	spineBleed?: number;
 	spineWidthFormula?: {
 		unit: PrintUnit;
-		pageCountCoefficient: number;
-		pageCountThickness: number;
-		baseWidth: number;
-		additionalWidth: number;
+		paperThickness: number;
+		fixedWidth: number;
 		spineBleed: number;
 	};
 	canvasRows?: CanvasRows;
@@ -357,10 +355,8 @@ export type WorkareaObject = FabricImage & {
 	spineBleed?: number;
 	spineWidthFormula?: {
 		unit: PrintUnit;
-		pageCountCoefficient: number;
-		pageCountThickness: number;
-		baseWidth: number;
-		additionalWidth: number;
+		paperThickness: number;
+		fixedWidth: number;
 		spineBleed: number;
 	};
 	canvasRows?: CanvasRows;

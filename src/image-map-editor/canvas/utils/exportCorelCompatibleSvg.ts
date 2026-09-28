@@ -51,6 +51,37 @@ const removeFabricNoise = (root: Element) => {
 	Array.from(root.querySelectorAll('image')).forEach(image => {
 		const href = image.getAttribute('href') || image.getAttributeNS(XLinkNamespace, 'href') || '';
 		if (!href.trim()) image.remove();
+		else {
+			// Fabric represents the displayed image size through a transform while
+			// keeping the source bitmap's intrinsic width/height. CorelDRAW may
+			// otherwise re-apply its default aspect-ratio fitting on import, making
+			// the bitmap visibly smaller than its SVG bounds. Explicitly preserve
+			// the exported geometry so the image occupies the same region as in the
+			// editor (the surrounding workarea/page size is unchanged).
+			if (!image.hasAttribute('preserveAspectRatio')) image.setAttribute('preserveAspectRatio', 'none');
+
+			// CorelDRAW handles an image's own transform more reliably than a
+			// transform inherited from a Fabric group. Move the ancestor transforms
+			// onto the image and place it beside the outermost group. This preserves
+			// the exact visual geometry while avoiding Corel's second interpretation
+			// of the group scale (which makes raster artwork appear smaller).
+			const ancestors: Element[] = [];
+			let ancestor = image.parentElement;
+			while (ancestor && ancestor !== root) {
+				if (ancestor.getAttribute('transform')) ancestors.unshift(ancestor);
+				ancestor = ancestor.parentElement;
+			}
+			if (ancestors.length) {
+				const transforms = ancestors
+					.map(element => element.getAttribute('transform')?.trim())
+					.filter(Boolean)
+					.join(' ');
+				const ownTransform = image.getAttribute('transform')?.trim();
+				if (transforms) image.setAttribute('transform', `${transforms}${ownTransform ? ` ${ownTransform}` : ''}`);
+				const outer = ancestors[0];
+				outer.parentElement?.insertBefore(image, outer);
+			}
+		}
 	});
 
 	// Fabric's canvas background is emitted as a root-level 100% rectangle.

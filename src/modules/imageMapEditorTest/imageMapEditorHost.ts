@@ -54,6 +54,11 @@ export const loadFontLayouts = async (shopId: string | number, productId?: numbe
   }));
 };
 
+export const loadInnerPageFontLayouts = async (shopId: string | number, productId?: number) => {
+  const layouts = await browserAlbumApi.innerPageFontLayoutLibrary.list({ shopId: Number(shopId), productId, limit: 500 });
+  return layouts.map((layout) => ({ id: layout.id, name: layout.name, category: layout.productCategoryName, productCategoryName: layout.productCategoryName, productId: layout.productId, previewImage: layout.previewImage, layerCount: layout.layers.objects.length, layers: layout.layers }));
+};
+
 export const loadTextGenerationRules = async (): Promise<ImageMapTextGenerationRule[]> => {
   const result = await browserAlbumApi.textGenerationRules.list({ limit: 100, offset: 0 });
   return result.items.map((rule) => ({
@@ -80,6 +85,15 @@ export const createFontLayout: ImageMapFontLayoutCreator = async (shopId, name, 
   if (previewFile) await browserAlbumApi.fontLayoutLibrary.uploadPreview(created.id, previewFile);
 };
 
+export const createInnerPageFontLayout: ImageMapFontLayoutCreator = async (shopId, name, previewFile, layers, productId) => {
+  const created = await browserAlbumApi.innerPageFontLayoutLibrary.create({ shopId: Number(shopId), ...(productId !== undefined ? { productId: Number(productId) } : {}), name, sortKey: '', layers: layers ?? { objects: [], animations: [], styles: [], dataSources: [] } });
+  if (previewFile) await browserAlbumApi.fontLayoutLibrary.uploadPreview(created.id, previewFile);
+};
+
+export const deleteInnerPageFontLayout: ImageMapFontLayoutDeleter = async (layoutId) => { await browserAlbumApi.innerPageFontLayoutLibrary.delete(Number(layoutId)); };
+export const saveInnerPageFontLayout: ImageMapFontLayoutSaver = async (layoutId, layers) => { await browserAlbumApi.innerPageFontLayoutLibrary.update(Number(layoutId), { layers }); };
+export const updateInnerPageFontLayout: ImageMapFontLayoutUpdater = async (layoutId, shopId, name, _previewFile, productId) => { await browserAlbumApi.innerPageFontLayoutLibrary.update(Number(layoutId), { shopId: Number(shopId), name, ...(productId !== undefined ? { productId: Number(productId) } : {}) }); };
+
 export const deleteFontLayout: ImageMapFontLayoutDeleter = async (layoutId) => {
   await browserAlbumApi.fontLayoutLibrary.delete(Number(layoutId));
 };
@@ -104,6 +118,10 @@ export const loadFontLayoutSize: ImageMapFontLayoutSizeLoader = async (layoutId,
 
 export const syncFontLayoutSizeOptions: ImageMapFontLayoutSizeOptionSyncer = async (layoutId, sizeTemplateId, items) => (
   browserAlbumApi.fontLayoutLibrary.syncSizeOptions(Number(layoutId), sizeTemplateId, items)
+);
+
+export const syncInnerPageFontLayoutOptions: ImageMapFontLayoutSizeOptionSyncer = async (layoutId, innerPageTemplateId, items) => (
+  browserAlbumApi.innerPageFontLayoutLibrary.syncInnerPageOptions(Number(layoutId), innerPageTemplateId, items)
 );
 
 export const updateFontLayout: ImageMapFontLayoutUpdater = async (layoutId, shopId, name, previewFile, productId) => {

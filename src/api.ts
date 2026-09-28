@@ -22,6 +22,7 @@ import type {
   FontLayoutSizeOptionStatus,
   FontLayoutSizeOptionsSyncItem,
   FontLayoutSizeOptionsSyncResult,
+  FontLayoutInnerPageOptionsSyncResult,
   LocalUserProfile,
   Order,
   OrderListFilters,
@@ -465,10 +466,8 @@ function toSpineWidthFormula(value: unknown): SpineWidthFormula | undefined {
   const unit = textValue(record.unit).toLowerCase();
   return {
     unit: unit === 'in' || unit === 'cm' || unit === 'mm' ? unit : 'cm',
-    pageCountCoefficient: numberValue(record.page_count_coefficient ?? record.pageCountCoefficient),
-    pageCountThickness: numberValue(record.page_count_thickness ?? record.pageCountThickness),
-    baseWidth: numberValue(record.base_width ?? record.baseWidth),
-    additionalWidth: numberValue(record.additional_width ?? record.additionalWidth),
+    paperThickness: numberValue(record.paper_thickness ?? record.paperThickness),
+    fixedWidth: numberValue(record.fixed_width ?? record.fixedWidth),
     spineBleed: numberValue(record.spine_bleed ?? record.spineBleed),
   };
 }
@@ -1039,6 +1038,7 @@ function normalizeFontLayoutLibraryTemplate(value: unknown): FontLayoutLibraryTe
   return {
     id: numberValue(record.id),
     shopId: numberValue(record.shop_id ?? record.shopId),
+    layoutScope: record.layout_scope === 'inner_page' ? 'inner_page' : 'size',
     ...(numberValue(record.product_id ?? record.productId) > 0 ? { productId: numberValue(record.product_id ?? record.productId) } : {}),
     ...(textValue(record.product_category_name ?? record.productCategoryName).trim() ? { productCategoryName: textValue(record.product_category_name ?? record.productCategoryName).trim() } : {}),
     name: textValue(record.name ?? record.template_name).trim(),
@@ -1270,10 +1270,8 @@ export const browserAlbumApi = {
         spine_width_mode: payload.spineWidthMode,
         spine_width_formula: payload.spineWidthMode === 'formula' && payload.spineWidthFormula ? {
           unit: payload.spineWidthFormula.unit,
-          page_count_coefficient: payload.spineWidthFormula.pageCountCoefficient,
-          page_count_thickness: payload.spineWidthFormula.pageCountThickness,
-          base_width: payload.spineWidthFormula.baseWidth,
-          additional_width: payload.spineWidthFormula.additionalWidth,
+          paper_thickness: payload.spineWidthFormula.paperThickness,
+          fixed_width: payload.spineWidthFormula.fixedWidth,
           spine_bleed: payload.spineWidthFormula.spineBleed,
         } : null,
         ...(payload.spineWidthPageRules ? { spine_width_page_rules: {
@@ -1311,10 +1309,8 @@ export const browserAlbumApi = {
         ...(payload.spineWidthMode !== undefined ? { spine_width_mode: payload.spineWidthMode } : {}),
         ...(payload.spineWidthMode !== undefined ? { spine_width_formula: payload.spineWidthMode === 'formula' && payload.spineWidthFormula ? {
           unit: payload.spineWidthFormula.unit,
-          page_count_coefficient: payload.spineWidthFormula.pageCountCoefficient,
-          page_count_thickness: payload.spineWidthFormula.pageCountThickness,
-          base_width: payload.spineWidthFormula.baseWidth,
-          additional_width: payload.spineWidthFormula.additionalWidth,
+          paper_thickness: payload.spineWidthFormula.paperThickness,
+          fixed_width: payload.spineWidthFormula.fixedWidth,
           spine_bleed: payload.spineWidthFormula.spineBleed,
         } : null } : {}),
         ...(payload.spineWidthPageRules !== undefined ? { spine_width_page_rules: payload.spineWidthPageRules ? {
@@ -1774,7 +1770,7 @@ export const browserAlbumApi = {
     }
   },
   fontLayoutLibrary: {
-    list: async (filters: { shopId?: number; productId?: number; search?: string; limit?: number; offset?: number } = {}): Promise<FontLayoutLibraryTemplate[]> => (
+    list: async (filters: { shopId?: number; productId?: number; layoutScope?: 'size' | 'inner_page'; search?: string; limit?: number; offset?: number } = {}): Promise<FontLayoutLibraryTemplate[]> => (
       listItems(await apiRequest<unknown>({
         method: 'GET',
         url: '/font-layout-templates',
@@ -1783,6 +1779,7 @@ export const browserAlbumApi = {
           offset: filters.offset ?? 0,
           shop_id: filters.shopId,
           product_id: filters.productId,
+          layout_scope: filters.layoutScope ?? 'size',
           search: filters.search
         }
       })).map((item) => normalizeFontLayoutLibraryTemplate(item))
@@ -1801,6 +1798,7 @@ export const browserAlbumApi = {
       data: {
         shop_id: payload.shopId,
         ...(payload.productId !== undefined ? { product_id: payload.productId } : {}),
+        layout_scope: payload.layoutScope ?? 'size',
         name: payload.name,
         sort_key: payload.sortKey,
         ...(payload.previewImage !== undefined ? { preview_image: payload.previewImage } : {}),
@@ -1886,6 +1884,39 @@ export const browserAlbumApi = {
         missingSizeOptionIds: Array.isArray(missing) ? missing.map(textValue).filter(Boolean) : [],
         ...(textValue(record.message).trim() ? { message: textValue(record.message) } : {})
       };
+    },
+    syncInnerPageOptions: async (
+      templateId: number,
+      innerPageTemplateId: number,
+      items: FontLayoutSizeOptionsSyncItem[]
+    ): Promise<FontLayoutInnerPageOptionsSyncResult> => {
+      const response = unwrapApiData(await apiRequest<unknown>({
+        method: 'POST',
+        url: `/font-layout-templates/${templateId}/sync-inner-page-options`,
+        data: {
+          inner_page_template_id: innerPageTemplateId,
+          items: items.map((item) => ({ size_option_id: item.sizeOptionId, layers: fontLayoutLayerPayload(item.layers) }))
+        }
+      }));
+      const record = recordValue(response);
+      const ids = record.just_synced_size_option_ids ?? record.justSyncedSizeOptionIds;
+      return {
+        syncedCount: Number(record.synced_count ?? record.syncedCount) || undefined,
+        justSyncedSizeOptionIds: Array.isArray(ids) ? ids.map(textValue).filter(Boolean) : [],
+        missingSizeOptionIds: [],
+        ...(textValue(record.message).trim() ? { message: textValue(record.message) } : {})
+      };
+    }
+  },
+  innerPageFontLayoutLibrary: {
+    list: async (filters: { shopId?: number; productId?: number; search?: string; limit?: number; offset?: number } = {}): Promise<FontLayoutLibraryTemplate[]> => listItems(await apiRequest<unknown>({ method: 'GET', url: '/inner-page-font-layout-templates', params: { limit: filters.limit ?? 100, offset: filters.offset ?? 0, shop_id: filters.shopId, product_id: filters.productId, search: filters.search } })).map(normalizeFontLayoutLibraryTemplate),
+    create: async (payload: FontLayoutLibraryPayload): Promise<FontLayoutLibraryTemplate> => normalizeFontLayoutLibraryTemplate(await apiRequest<unknown>({ method: 'POST', url: '/inner-page-font-layout-templates', data: { shop_id: payload.shopId, product_id: payload.productId, name: payload.name, sort_key: payload.sortKey, layers: fontLayoutLayerPayload(payload.layers) } })),
+    update: async (templateId: number, payload: Partial<FontLayoutLibraryPayload>): Promise<FontLayoutLibraryTemplate> => normalizeFontLayoutLibraryTemplate(await apiRequest<unknown>({ method: 'PATCH', url: `/inner-page-font-layout-templates/${templateId}`, data: { ...(payload.name !== undefined ? { name: payload.name } : {}), ...(payload.layers !== undefined ? { layers: fontLayoutLayerPayload(payload.layers) } : {}), ...(payload.shopId !== undefined ? { shop_id: payload.shopId } : {}), ...(payload.productId !== undefined ? { product_id: payload.productId } : {}) } })),
+    get: async (templateId: number): Promise<FontLayoutLibraryTemplate> => normalizeFontLayoutLibraryTemplate(await apiRequest<unknown>({ method: 'GET', url: `/inner-page-font-layout-templates/${templateId}` })),
+    delete: async (templateId: number): Promise<void> => { await apiRequest({ method: 'DELETE', url: `/inner-page-font-layout-templates/${templateId}` }); },
+    syncInnerPageOptions: async (templateId: number, innerPageTemplateId: number, items: FontLayoutSizeOptionsSyncItem[]) => {
+      const response = recordValue(unwrapApiData(await apiRequest<unknown>({ method: 'POST', url: `/font-layout-templates/${templateId}/sync-inner-page-options`, data: { inner_page_template_id: innerPageTemplateId, items: items.map((item) => ({ size_option_id: item.sizeOptionId, layers: fontLayoutLayerPayload(item.layers) })) } })));
+      return { syncedCount: Number(response.synced_count ?? response.syncedCount) || undefined, justSyncedSizeOptionIds: Array.isArray(response.just_synced_size_option_ids) ? response.just_synced_size_option_ids.map(textValue) : [], missingSizeOptionIds: [], message: textValue(response.message) };
     }
   },
   fontLayoutTemplates: {

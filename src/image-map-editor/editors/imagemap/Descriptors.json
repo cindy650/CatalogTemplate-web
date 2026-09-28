@@ -308,8 +308,8 @@
 				"width": 400,
 				"height": 400,
 				"name": "新建 SVG",
-				"loadType": "file",
-				"src": "./images/sample/chiller.svg"
+				"loadType": "svg",
+				"src": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><path d=\"M50 5 95 95H5Z\" fill=\"#1677ff\"/></svg>"
 			}
 		}
 	]
