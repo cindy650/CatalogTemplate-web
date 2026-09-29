@@ -2,6 +2,7 @@ export interface PathTextMetrics {
 	getAdvanceWidth: (text: string) => number;
 	getPathData: (text: string, x: number, y: number) => string;
 	normalizeCharacter?: (character: string) => string;
+	isolateCharacter?: (character: string) => boolean;
 	keepCharacterAsText?: (character: string) => boolean;
 }
 
@@ -53,6 +54,14 @@ export const buildWhitespaceSafePathRuns = (
 			// font. Converting it with another font changes the visual design.
 			flush();
 			runs.push({ text: normalizedCharacter, x: cursorX, y });
+			const width = Number(metrics.getAdvanceWidth(normalizedCharacter));
+			if (Number.isFinite(width)) cursorX += width;
+		} else if (metrics.isolateCharacter?.(normalizedCharacter)) {
+			// Fallback fonts are selected per character. Flush the primary-font
+			// segment before emitting the fallback outline so cursor advances and
+			// glyph geometry remain identical to the browser's fallback run.
+			flush();
+			runs.push({ d: metrics.getPathData(normalizedCharacter, cursorX, y) });
 			const width = Number(metrics.getAdvanceWidth(normalizedCharacter));
 			if (Number.isFinite(width)) cursorX += width;
 		} else {

@@ -31,7 +31,7 @@
 
 - `src/image-map-editor/canvas`：Fabric 画布、对象、事件处理、缩放、对齐和导出。
 - `src/image-map-editor/editors/imagemap`：图片地图编辑器页面、属性面板、数据源、动画、预览和工具栏。
-- `components`、`theme`、`i18n`：通用组件、主题和多语言支持。
+- `components`、`theme`、`i18n`：通用组件
 
 ## 5. 接口与基础服务
 

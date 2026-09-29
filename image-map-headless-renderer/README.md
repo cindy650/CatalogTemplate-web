@@ -90,7 +90,7 @@ Python Playwright、Selenium 或其他无头浏览器都可以直接调用这一
 - Chart、Element、Iframe、Video 是编辑器 DOM 覆盖层，本来就不是 Fabric 静态像素，导出时忽略并返回 warning。
 - JPG/PNG 位图和两种 SVG 导出都不会绘制 `workarea.printGuides` 中的打印辅助线；这些线只用于编辑器预览和 JSON 数据。
 - `svg` 使用编辑器当前完整的可编辑 SVG 导出逻辑；`text-to-svg` 使用编辑器当前的 `text-to-svg` 路径转换逻辑。两者都包含工作区裁剪、背景、图层名称、打印线、CorelDRAW XML 头和格式化缩进。
-- 转曲时会忽略 `U+FE0E/U+FE0F` 文字变体选择符；字体缺少 `U+2764` 时会优先使用同字体的 `U+2665` 爱心字形。其他缺失的符号（例如 `&`）会从本次导出已加载的其他字体中寻找可用轮廓，避免转换为 `.notdef` 方框或直接丢失。
+- 转曲时会忽略 `U+FE0E/U+FE0F` 文字变体选择符；普通浏览器显示中，`U+2764`（❤）使用 `Segoe UI Symbol`、`U+0026`（&）使用 `Microsoft YaHei`，因此转曲会优先使用随工具提供的对应回退字形子集，避免变成 `.notdef` 方框、错用选中字体或直接丢失。Python 启动器会把这两个回退字体以内嵌 data URL 传给浏览器。
 - SVG 导出会将图片祖先分组的缩放/位移 transform 合并到图片自身，并设置 `preserveAspectRatio="none"`，避免 CorelDRAW 导入时重复解析分组变换导致图片内容缩小；图片和文字的工作区尺寸保持一致。
 - `workarea.canvasRows === 2` 时使用双排画布：总高度为两倍单排高度加 `canvasRowGap` 分隔缝，未提供该字段时默认无分隔缝（`0px`）；双排是封面/封底两面结构，不包含背脊或背脊出血，宽度为两面单面宽加左右出血；竖向辅助线贯穿整个工作区，每排分别生成横向辅助线。仍只渲染一套内容图层，不会复制图层。
 - 双排 JSON 会按 `unit`、`sideWidth`、`sideHeight` 和出血字段重新核准工作区几何及辅助线，并将 `spineWidth/spineBleed` 归零。旧 JSON 未提供 `canvasRows` 时继续按单排原样渲染。

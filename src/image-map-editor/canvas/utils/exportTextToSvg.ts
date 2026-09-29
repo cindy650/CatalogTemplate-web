@@ -15,6 +15,8 @@ export interface TextToSvgFontSource {
 
 export interface TextToSvgExportOptions extends CorelCompatibleSvgExportOptions {
 	fontSources: TextToSvgFontSource[];
+	/** Fonts used only for characters missing from the selected layer font. */
+	fallbackFontSources?: TextToSvgFontSource[];
 }
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
@@ -94,12 +96,39 @@ const replaceTextWithPaths = async (
 	document: XMLDocument,
 	root: Element,
 	fontSources: TextToSvgFontSource[],
+	fallbackFontSources: TextToSvgFontSource[],
 ) => {
 	const sourceByFamily = new Map(
 		fontSources
 			.filter(source => source?.family && String(source.url || '').trim())
 			.map(source => [normalizeFamily(source.family), source]),
 	);
+	const fallbackFonts = new Map<string, TextToSVG>();
+	const fallbackFontPromises = new Map<string, Promise<TextToSVG>>();
+	const fallbackSources = fallbackFontSources.filter(source => source?.family && String(source.url || '').trim());
+
+	const getFallbackFont = async (character: string) => {
+		const cached = fallbackFonts.get(character);
+		if (cached) return cached;
+		for (const source of fallbackSources) {
+			const url = source.loadUrl || source.url;
+			let promise = fallbackFontPromises.get(url);
+			if (!promise) {
+				promise = loadFont(url);
+				fallbackFontPromises.set(url, promise);
+			}
+			try {
+				const candidate = await promise;
+				if (!hasUsableGlyph(candidate, character)) continue;
+				fallbackFonts.set(character, candidate);
+				return candidate;
+			} catch {
+				// A missing optional fallback asset should not prevent other fonts
+				// or the normal editable SVG export from working.
+			}
+		}
+		return undefined;
+	};
 
 	for (const text of Array.from(root.querySelectorAll('text'))) {
 		const source = sourceByFamily.get(normalizeFamily(styleValue(text, 'font-family')));
@@ -123,9 +152,16 @@ const replaceTextWithPaths = async (
 			if (!content) continue;
 			const x = numberValue(run, 'x');
 			const y = numberValue(run, 'y');
+			const contentCharacters = Array.from(content).filter(character => character !== '\uFE0E' && character !== '\uFE0F' && !/\s/u.test(character));
+			for (const character of contentCharacters) {
+				if (!hasUsableGlyph(textToSvg, character)) await getFallbackFont(character);
+			}
 			const textPaths = buildWhitespaceSafePathRuns(content, x, y, {
-				getAdvanceWidth: value => textToSvg.getWidth(value, { fontSize, kerning: true }),
-				getPathData: (value, pathX, pathY) => textToSvg.getD(value, {
+				getAdvanceWidth: value => {
+					const characterFont = Array.from(value).length === 1 ? fallbackFonts.get(value) : undefined;
+					return (characterFont || textToSvg).getWidth(value, { fontSize, kerning: true });
+				},
+				getPathData: (value, pathX, pathY) => (Array.from(value).length === 1 ? fallbackFonts.get(value) || textToSvg : textToSvg).getD(value, {
 					x: pathX,
 					y: pathY,
 					fontSize,
@@ -134,7 +170,8 @@ const replaceTextWithPaths = async (
 				normalizeCharacter: character => {
 					return character;
 				},
-				keepCharacterAsText: character => !hasUsableGlyph(textToSvg, character),
+				isolateCharacter: character => fallbackFonts.has(character),
+				keepCharacterAsText: character => !hasUsableGlyph(textToSvg, character) && !fallbackFonts.has(character),
 			});
 			textPaths.forEach(runPath => {
 				if (runPath.text !== undefined) {
@@ -176,13 +213,13 @@ const formatSvg = (svg: string) => {
 		.join('\n');
 };
 
-export const exportTextToSvg = async ({ fontSources, ...options }: TextToSvgExportOptions): Promise<string> => {
+export const exportTextToSvg = async ({ fontSources, fallbackFontSources = [], ...options }: TextToSvgExportOptions): Promise<string> => {
 	const editableSvg = exportCorelCompatibleSvg(options);
 	const document = new DOMParser().parseFromString(editableSvg, 'image/svg+xml');
 	const root = document.documentElement;
 	if (document.querySelector('parsererror') || root.localName !== 'svg') throw new Error('可编辑 SVG XML 无效');
 
-	await replaceTextWithPaths(document, root, fontSources);
+	await replaceTextWithPaths(document, root, fontSources, fallbackFontSources);
 	const serialized = new XMLSerializer().serializeToString(root);
 	const output = [
 		'<?xml version="1.0" encoding="UTF-8"?>',

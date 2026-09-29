@@ -1478,6 +1478,18 @@ export const browserAlbumApi = {
           order_number: order.orderNo
         }
       });
+    },
+    rollbackStatus: async (order: Pick<Order, 'id' | 'orderNo'>, status: number): Promise<void> => {
+      await apiRequest<unknown>({
+        method: 'POST',
+        url: '/orders/status/rollback',
+        timeout: 120_000,
+        data: {
+          order_id: order.id,
+          order_number: order.orderNo,
+          status
+        }
+      });
     }
   },
   templates: {

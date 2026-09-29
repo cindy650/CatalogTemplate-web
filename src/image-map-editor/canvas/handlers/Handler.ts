@@ -51,6 +51,14 @@ import { resolveFabricObjectType } from './resolveFabricObjectType';
 
 installTextWordSpacingSupport();
 
+// Keep symbol outlines aligned with the browser's ordinary text fallback.
+// These tiny subset fonts are only used when the selected layer font lacks a
+// glyph (for example ❤ in BKANT or & in GreatDayPersonalUse).
+const EXPORT_FALLBACK_FONT_SOURCES = [
+	{ family: 'Segoe UI Symbol', url: '/export-fallback-fonts/seguisym-heart.ttf' },
+	{ family: 'Microsoft YaHei', url: '/export-fallback-fonts/microsoft-yahei-amp.ttf' },
+];
+
 export interface HandlerCallback {
 	/**
 	 * When has been added object in Canvas, Called function
@@ -1642,6 +1650,23 @@ class Handler implements HandlerOptions {
 			this.canvas.renderAll();
 		});
 		await Promise.all(loadPromises);
+		// Re-apply persisted alignment markers after all objects and fonts have
+		// loaded. Text metrics can change during font loading, so doing this only
+		// before import leaves a saved "horizontalCentered" object at its old x.
+		const restoreCenteredObjects = (objects: FabricObject[]) => {
+			objects.forEach(object => {
+				if (object.get('horizontalCentered') === true) {
+					this.alignmentHandler.centerObjectInPrintRegion(object, 'horizontal');
+				}
+				if (object.get('verticalCentered') === true) {
+					this.alignmentHandler.centerObjectInPrintRegion(object, 'vertical');
+				}
+				if (typeof (object as any).getObjects === 'function') {
+					restoreCenteredObjects((object as any).getObjects() as FabricObject[]);
+				}
+			});
+		};
+		restoreCenteredObjects(this.canvas.getObjects().filter(object => object !== this.workarea));
 		this.canvas.renderAll();
 		this.objects = this.getObjects();
 		if (this.canvasActions.transaction) {
@@ -2246,6 +2271,7 @@ class Handler implements HandlerOptions {
 				bounds,
 				backgroundColor: String((this.workarea as any).backgroundColor || '#ffffff'),
 				fontSources: Array.from(fontSources.values()),
+				fallbackFontSources: EXPORT_FALLBACK_FONT_SOURCES,
 				// Keep SVG exports limited to the artwork; guides remain visible only
 				// in the editor preview.
 				printGuides: [],

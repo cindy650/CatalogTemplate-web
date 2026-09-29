@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { App, Alert, Button, Card, Descriptions, Empty, Input, Modal, Pagination, Popconfirm, Result, Select, Space, Spin, Steps, Table, Tag, Tooltip } from 'antd';
-import { AppstoreOutlined, CheckOutlined, EditOutlined, FileTextOutlined, PrinterOutlined, ReloadOutlined, SearchOutlined, SendOutlined, ShopOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, CheckOutlined, EditOutlined, FileTextOutlined, PrinterOutlined, ReloadOutlined, RollbackOutlined, SearchOutlined, SendOutlined, ShopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { CatalogSizeTemplate, Order, OrderItem, OrderListFilters, ProductCategory } from '@shared/domain';
 import { browserAlbumApi } from '../../api';
@@ -211,6 +211,10 @@ export default function OrdersPage({
   const exportingOrderRef = useRef('');
   const advancingOrderRef = useRef('');
   const sendingPreviewOrderRef = useRef('');
+  const rollbackOrderRef = useRef('');
+  const [rollbackOrderId, setRollbackOrderId] = useState('');
+  const [rollbackOrder, setRollbackOrder] = useState<Order>();
+  const [rollbackStatus, setRollbackStatus] = useState<number>();
   const [editingSetupOrder, setEditingSetupOrder] = useState<Order>();
   const [editingSetupStep, setEditingSetupStep] = useState(1);
   const [setupProducts, setSetupProducts] = useState<ProductCategory[]>([]);
@@ -234,7 +238,7 @@ export default function OrdersPage({
   const setupShop = setupShopId === undefined ? undefined : shops.find((item) => item.id === setupShopId);
   const selectedSetupTemplate = setupTemplates.find((item) => item.id === setupTemplateId);
   const selectedSetupOption = selectedSetupTemplate?.sizeOptions.find((item) => item.id === setupOptionId);
-  const orderActionBusy = Boolean(exportingOrderId || advancingOrderId || sendingPreviewOrderId);
+  const orderActionBusy = Boolean(exportingOrderId || advancingOrderId || sendingPreviewOrderId || rollbackOrderId);
 
   useEffect(() => {
     if (!editingSetupOrder) return;
@@ -427,6 +431,27 @@ export default function OrdersPage({
       if (advancingOrderRef.current === order.id) {
         advancingOrderRef.current = '';
         setAdvancingOrderId('');
+      }
+    }
+  }
+
+  async function rollbackOrderStatus(): Promise<void> {
+    if (!rollbackOrder || rollbackStatus === undefined || rollbackOrderRef.current || orderActionBusy) return;
+    const order = rollbackOrder;
+    rollbackOrderRef.current = order.id;
+    setRollbackOrderId(order.id);
+    try {
+      await browserAlbumApi.orders.rollbackStatus(order, rollbackStatus);
+      await reloadOrders();
+      message.success(`订单 ${order.orderNo} 已回退到“${orderStatuses.find((item) => item.status === rollbackStatus)?.statusText || rollbackStatus}”`);
+      setRollbackOrder(undefined);
+      setRollbackStatus(undefined);
+    } catch (error) {
+      message.error(`订单 ${order.orderNo} 回退失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (rollbackOrderRef.current === order.id) {
+        rollbackOrderRef.current = '';
+        setRollbackOrderId('');
       }
     }
   }
@@ -686,6 +711,23 @@ export default function OrdersPage({
               </Button>
             </Popconfirm>
           )}
+          {order.status > 0 && orderStatuses.some((item) => item.status < order.status) && (
+            <Tooltip title="将订单回退到之前的状态">
+              <Button
+                block
+                size="small"
+                icon={<RollbackOutlined />}
+                disabled={orderActionBusy}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setRollbackOrder(order);
+                  setRollbackStatus(undefined);
+                }}
+              >
+                回退
+              </Button>
+            </Tooltip>
+          )}
           <Tag
             color={order.wecomPreviewSent ? 'success' : 'error'}
             style={{ marginTop: 20 }}
@@ -864,6 +906,37 @@ export default function OrdersPage({
     </Modal>
   ) : null;
 
+  const rollbackModal = rollbackOrder ? (
+    <Modal
+      open
+      title={`回退订单 ${rollbackOrder.orderNo}`}
+      okText="确认回退"
+      cancelText="取消"
+      confirmLoading={rollbackOrderId === rollbackOrder.id}
+      okButtonProps={{ disabled: rollbackStatus === undefined || orderActionBusy }}
+      onCancel={() => {
+        if (!rollbackOrderId) {
+          setRollbackOrder(undefined);
+          setRollbackStatus(undefined);
+        }
+      }}
+      onOk={() => void rollbackOrderStatus()}
+    >
+      <p>请选择要回退到的历史订单状态，当前状态和未来状态不可选择。</p>
+      <Select
+        style={{ width: '100%' }}
+        placeholder="请选择历史状态"
+        value={rollbackStatus}
+        options={orderStatuses
+          .filter((item) => item.status < rollbackOrder.status)
+          .sort((left, right) => left.status - right.status)
+          .map((item) => ({ value: item.status, label: `${item.status} · ${item.statusText}` }))}
+        onChange={setRollbackStatus}
+        disabled={Boolean(rollbackOrderId)}
+      />
+    </Modal>
+  ) : null;
+
   return (
     <>
       <section className="panel orders-panel">
@@ -983,6 +1056,7 @@ export default function OrdersPage({
       </div>
       </section>
       {editSetupModal}
+      {rollbackModal}
     </>
   );
 }

@@ -12350,6 +12350,11 @@ var ImageMapEditorSvgExportBundle = (() => {
         runs.push({ text: normalizedCharacter, x: cursorX, y });
         const width = Number(metrics.getAdvanceWidth(normalizedCharacter));
         if (Number.isFinite(width)) cursorX += width;
+      } else if (metrics.isolateCharacter?.(normalizedCharacter)) {
+        flush();
+        runs.push({ d: metrics.getPathData(normalizedCharacter, cursorX, y) });
+        const width = Number(metrics.getAdvanceWidth(normalizedCharacter));
+        if (Number.isFinite(width)) cursorX += width;
       } else {
         segment += normalizedCharacter;
       }
@@ -12415,10 +12420,33 @@ var ImageMapEditorSvgExportBundle = (() => {
     });
     target2.setAttribute("xml:space", "preserve");
   };
-  var replaceTextWithPaths = async (document2, root, fontSources) => {
+  var replaceTextWithPaths = async (document2, root, fontSources, fallbackFontSources) => {
     const sourceByFamily = new Map(
       fontSources.filter((source) => source?.family && String(source.url || "").trim()).map((source) => [normalizeFamily(source.family), source])
     );
+    const fallbackFonts = /* @__PURE__ */ new Map();
+    const fallbackFontPromises = /* @__PURE__ */ new Map();
+    const fallbackSources = fallbackFontSources.filter((source) => source?.family && String(source.url || "").trim());
+    const getFallbackFont = async (character) => {
+      const cached = fallbackFonts.get(character);
+      if (cached) return cached;
+      for (const source of fallbackSources) {
+        const url = source.loadUrl || source.url;
+        let promise = fallbackFontPromises.get(url);
+        if (!promise) {
+          promise = loadFont(url);
+          fallbackFontPromises.set(url, promise);
+        }
+        try {
+          const candidate = await promise;
+          if (!hasUsableGlyph(candidate, character)) continue;
+          fallbackFonts.set(character, candidate);
+          return candidate;
+        } catch {
+        }
+      }
+      return void 0;
+    };
     for (const text of Array.from(root.querySelectorAll("text"))) {
       const source = sourceByFamily.get(normalizeFamily(styleValue(text, "font-family")));
       const fontSize = Number.parseFloat(styleValue(text, "font-size"));
@@ -12439,9 +12467,16 @@ var ImageMapEditorSvgExportBundle = (() => {
         if (!content) continue;
         const x = numberValue(run, "x");
         const y = numberValue(run, "y");
+        const contentCharacters = Array.from(content).filter((character) => character !== "\uFE0E" && character !== "\uFE0F" && !/\s/u.test(character));
+        for (const character of contentCharacters) {
+          if (!hasUsableGlyph(textToSvg, character)) await getFallbackFont(character);
+        }
         const textPaths = buildWhitespaceSafePathRuns(content, x, y, {
-          getAdvanceWidth: (value) => textToSvg.getWidth(value, { fontSize, kerning: true }),
-          getPathData: (value, pathX, pathY) => textToSvg.getD(value, {
+          getAdvanceWidth: (value) => {
+            const characterFont = Array.from(value).length === 1 ? fallbackFonts.get(value) : void 0;
+            return (characterFont || textToSvg).getWidth(value, { fontSize, kerning: true });
+          },
+          getPathData: (value, pathX, pathY) => (Array.from(value).length === 1 ? fallbackFonts.get(value) || textToSvg : textToSvg).getD(value, {
             x: pathX,
             y: pathY,
             fontSize,
@@ -12450,7 +12485,8 @@ var ImageMapEditorSvgExportBundle = (() => {
           normalizeCharacter: (character) => {
             return character;
           },
-          keepCharacterAsText: (character) => !hasUsableGlyph(textToSvg, character)
+          isolateCharacter: (character) => fallbackFonts.has(character),
+          keepCharacterAsText: (character) => !hasUsableGlyph(textToSvg, character) && !fallbackFonts.has(character)
         });
         textPaths.forEach((runPath) => {
           if (runPath.text !== void 0) {
@@ -12486,12 +12522,12 @@ var ImageMapEditorSvgExportBundle = (() => {
       return line;
     }).join("\n");
   };
-  var exportTextToSvg = async ({ fontSources, ...options }) => {
+  var exportTextToSvg = async ({ fontSources, fallbackFontSources = [], ...options }) => {
     const editableSvg = exportCorelCompatibleSvg(options);
     const document2 = new DOMParser().parseFromString(editableSvg, "image/svg+xml");
     const root = document2.documentElement;
     if (document2.querySelector("parsererror") || root.localName !== "svg") throw new Error("\u53EF\u7F16\u8F91 SVG XML \u65E0\u6548");
-    await replaceTextWithPaths(document2, root, fontSources);
+    await replaceTextWithPaths(document2, root, fontSources, fallbackFontSources);
     const serialized = new XMLSerializer().serializeToString(root);
     const output = [
       '<?xml version="1.0" encoding="UTF-8"?>',

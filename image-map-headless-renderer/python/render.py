@@ -46,7 +46,13 @@ def render_json(
             page.wait_for_function("Boolean(globalThis.ImageMapHeadlessRenderer)")
             result = page.evaluate(
                 "payload => globalThis.ImageMapHeadlessRenderer.render(payload)",
-                {"json": render_document, "dpi": dpi, "quality": 0.95, "formats": formats},
+                {
+                    "json": render_document,
+                    "dpi": dpi,
+                    "quality": 0.95,
+                    "formats": formats,
+                    "fallbackFontSources": fallback_font_sources(),
+                },
             )
         finally:
             browser.close()
@@ -160,6 +166,21 @@ def resource_data_url(value: str, base_directory: Path) -> str:
         content = resource.read_bytes()
         mime = mimetypes.guess_type(resource.name)[0] or "application/octet-stream"
     return f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"
+
+
+def fallback_font_sources():
+    """Embed the browser fallback subsets so file:// runners can load them."""
+    fallback_directory = ROOT / "browser" / "fallback-fonts"
+    return [
+        {
+            "family": "Segoe UI Symbol",
+            "url": resource_data_url(str(fallback_directory / "seguisym-heart.ttf"), ROOT),
+        },
+        {
+            "family": "Microsoft YaHei",
+            "url": resource_data_url(str(fallback_directory / "microsoft-yahei-amp.ttf"), ROOT),
+        },
+    ]
 
 
 def write_data_url(output_path: Path, data_url: str):
